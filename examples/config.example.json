@@ -1,0 +1,48 @@
+{
+  "schema": 2,
+  "organization": "Example University",
+  "problem_set_id": "",
+  "source_mode": "http",
+  "play_mode": "click",
+  "click_from_place": 4,
+  "first_to_solve": true,
+  "speed": 1.0,
+  "freeze_minutes": 60,
+  "penalty_minutes": 20,
+  "awards": [
+    {"name": "一等奖", "count": 1, "show": "detail", "auto": "rank", "team_ids": [], "manual": false, "names": {}},
+    {"name": "二等奖", "count": 2, "show": "detail", "auto": "rank", "team_ids": [], "manual": false, "names": {}},
+    {"name": "三等奖", "count": 3, "show": "detail", "auto": "rank", "team_ids": [], "manual": false, "names": {}}
+  ],
+  "award_medal_summary": false,
+  "medals": "1 2 3",
+  "award_team_snapshot": {},
+  "display_name": "{team.name}",
+  "font_path": "",
+  "extra_args": "",
+  "photos_dir": "",
+  "logos_dir": "",
+  "mode": "live",
+  "live": {
+    "port": 8791,
+    "channel": "http",
+    "poll_interval": 5,
+    "full_check_interval": 120,
+    "freeze_mode": "audience",
+    "problem_colors": ["#FFFFFF", "#000000", "#7FE3E8", "#7BE84A", "#2B3CE8", "#FFF045", "#B9BFC6", "#B32438", "#FF9A2E", "#7A7A00", "#E94BD8", "#A9742B", "#00A5A5"],
+    "medal_colors": ["#D4AF37", "#A8B0B8", "#CD7F32"],
+    "view": {
+      "overlay": 0,
+      "top": 0,
+      "rows": 13,
+      "scale": 1,
+      "font": "yahei",
+      "anim": 1,
+      "scroll": 1,
+      "scroll_speed": 24,
+      "scroll_pause": 2,
+      "title": "",
+      "freeze": "audience"
+    }
+  }
+}

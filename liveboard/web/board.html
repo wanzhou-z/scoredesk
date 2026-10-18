@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ScoreDeck · PTA 实时榜单</title>
+  <link rel="stylesheet" href="/web/board.css">
+  <!-- 校徽加载重试：必须在 <img> 之前定义（defer 的 board.js 跑得比图片 onerror 晚，
+       否则首帧失败会报 "logoRetry is not defined"）。400/1200/2500ms 重试最多 3 次，
+       仍失败才淡出，但**保留元素与尺寸**（行高/列线不跳）。 -->
+  <script>
+  window.LOGO_RETRY_DELAYS = [400, 1200, 2500];
+  window.logoRetry = function (img) {
+    if (!img) return;
+    var n = Number(img.dataset.retry || 0);
+    var base = img.dataset.src || (img.getAttribute('src') || '').split('?')[0];
+    if (!base) return;
+    img.dataset.src = base;
+    if (n < window.LOGO_RETRY_DELAYS.length) {
+      img.dataset.retry = String(n + 1);
+      img.dataset.state = 'retry';
+      setTimeout(function () { img.src = base + '?retry=' + (n + 1) + '&t=' + Date.now(); },
+                 window.LOGO_RETRY_DELAYS[n]);
+      return;
+    }
+    img.dataset.state = 'failed';
+    img.style.opacity = '0';
+  };
+  window.logoOk = function (img) { if (img) img.dataset.state = 'ok'; };
+  // M23 标题栏校徽：取不到就整块隐藏（不留空洞 / 破图）；先按 400/800ms 重试两次。
+  window.titleBarLogoFail = function (img) {
+    if (!img) return;
+    var n = Number(img.dataset.retry || 0);
+    var base = img.dataset.src || (img.getAttribute('src') || '').split('?')[0];
+    if (!base) { img.style.display = 'none'; return; }
+    img.dataset.src = base;
+    if (n < 2) {
+      img.dataset.retry = String(n + 1);
+      setTimeout(function () { img.src = base + '?retry=' + (n + 1) + '&t=' + Date.now(); }, 400 * (n + 1));
+      return;
+    }
+    img.style.display = 'none';
+  };
+  </script>
+  <script src="/web/board.js" defer></script>
+</head>
+<body>
+<!-- M17：结构照搬参照榜 CSGrandeur CCPCOJ（实时榜单页 outrank/rank，模板已换成**滚榜页 outrank/rank/roll**）：
+     .rank-system（页面壳）> .rank-page-header（页头：**我们的校徽** + 赛事标题 + 右侧状态）
+     > .rank-toolbar（队伍排名 + 时间 + 筛选计数，卡片样式照滚榜页的控件卡）
+     > .rank-panel（.rank-header-row 表头 / 榜单行 / .rank-footer 图例 / 人工控制条）
+     数据行照滚榜页是**上下两栏**：上栏 名次徽章 | 标志(校徽) | 队伍块；下栏 题数·罚时 | 题目格。
+     JS 的数据钩子（#app/.topbar/.board-panel/#headRow/#viewport/#rows/#count/#ctl…）一个都没少。 -->
+<main id="app" class="rank-system">
+  <div class="topbar rank-chrome">
+    <!-- ① 页头（参照榜滚榜页：左侧标志 + 赛事标题；右侧动作/状态）。标志用**我们的校徽**：
+         走现有 /logo/default.png 路由（= 校徽目录里 default.png / 只有扩展名的那张，服务端会自动裁圆）。 -->
+    <header class="rank-page-header">
+      <div class="rank-page-title">
+        <img class="brand" src="/logo/default.png" data-src="/logo/default.png" alt="校徽" title="默认校徽（校徽目录里的 default.png）" onload="logoOk(this)" onerror="logoRetry(this)">
+        <div class="rank-page-title-text"><h1 id="title">实时榜单</h1><span id="subtitle">正在连接比赛数据…</span></div>
+      </div>
+      <div class="rank-page-actions">
+        <span class="rank-chip"><i id="dot"></i><b id="conn">连接中</b></span>
+        <span class="rank-chip">通道 <b id="channel">--</b></span>
+        <span class="rank-chip">更新 <b id="updated">--</b></span>
+      </div>
+    </header>
+
+    <!-- ② 工具条（照滚榜页的控件卡；#elapsed = 比赛进行；#freezeLabel/#freezeText = 封榜状态；
+         #count = 题目·进榜·"数据可能不全"黄字）。滚榜页没有比赛时间进度条 -> .rank-progress 收起。 -->
+    <div class="rank-toolbar">
+      <div class="rank-toolbar-title"><b>队伍排名</b><small>Team Rank</small></div>
+      <div class="rank-toolbar-controls">
+        <div class="rank-timebar" id="timeBar" aria-label="滚榜时间轴">
+          <b class="timebar-clock" id="timeBarClock" title="当前回放到（时:分:秒）">00:00:00</b>
+          <input type="range" class="timebar-slider" id="timeBarSlider" min="0" max="1000" step="1" value="0" aria-label="拖动到任意比赛时刻">
+          <button type="button" class="timebar-play" id="timeBarPlay" title="播放 / 暂停回放" aria-label="播放或暂停回放">▶</button>
+          <button type="button" class="timebar-live" id="timeBarLive" title="回到实时（继续跟随服务器最新数据）">实时</button>
+        </div>
+        <div class="rank-progress" role="presentation"><div class="rank-progress-fill" id="progressFill"></div><span class="rank-progress-knob" id="progressKnob"></span></div>
+        <div class="rank-time"><b id="elapsed">00:00:00</b><small><span id="freezeLabel">封榜倒计时</span> <i id="freezeText">--:--:--</i></small></div>
+        <div class="rank-filter-chip"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span id="count">等待比赛数据</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ 榜单面板（表头行 / 数据行 / 控制条 / 页脚图例） -->
+  <section class="board-panel rank-panel" aria-label="比赛榜单">
+    <!-- M23 标题栏（照参照榜左上角）：左侧校徽 + 榜单名，和表格同宽；在**正常文档流**里，
+         所以 ?overlay=1（OBS 叠加）时只会把表格往下推、不会盖住表格。校徽走现有只读路由
+         /logo/default.png（队伍徽章那套默认图），取不到由 titleBarLogoFail 隐藏、不留空洞。
+         ?classic=1（旧皮肤）由 CSS 隐藏它，保持旧视觉可逐像素对照。 -->
+    <div class="rank-titlebar" id="titleBar">
+      <img class="titlebar-logo" id="titleBarLogo" src="/logo/default.png" data-src="/logo/default.png" alt="校徽" title="校徽" onload="logoOk(this)" onerror="titleBarLogoFail(this)">
+      <h2 class="titlebar-name" id="contestTitle">2026技术部二面</h2>
+    </div>
+    <div id="headRow" class="grid header-row rank-header-row" role="row"></div>
+    <div id="viewport"><div id="rows" role="table" aria-label="排名"></div></div>
+    <!-- M8 人工查看控制条：默认给"人工看"用；?overlay=1（OBS 叠加）时 display:none，
+         不占布局、画面与加此功能之前逐像素一致。 -->
+    <div id="ctl" aria-label="榜单滑动控制">
+      <label class="ctl-auto" title="开 = 乒乓自动滚动（同以前）；关 = 画面静止。若配置里 anim=0，勾选本框会在本页运行期解除动画冻结（不改配置文件）"><input type="checkbox" id="ctlAuto"><span>自动滑动</span></label>
+      <input type="range" id="ctlSlider" min="0" max="1000" step="1" value="0" orient="vertical" aria-label="手动滑动榜单" title="拖动可人工查看任意名次">
+      <span id="ctlPos" class="ctl-pos" aria-live="off">—</span>
+      <!-- M14 强制全量刷新：重抓全部提交记录 + 队伍名录（修「数据拉取不全」）。
+           按钮在 #ctl 里，所以 ?overlay=1（OBS 叠加）时随控制条一起 display:none，叠加画面不受影响。 -->
+      <button type="button" id="ctlFull" class="ctl-full" title="强制全量刷新：重抓全部提交记录与队伍名录（拉取不全时用；也可用 ?refresh=full）">全量刷新</button>
+    </div>
+    <footer class="rank-footer"><div class="legend"><i class="ac"></i>通过 <i class="wrong"></i>未通过 <i class="pending"></i>未提交 <i class="pending-cell"></i>判题中 <i class="post"></i>封榜后提交 <i class="locked"></i>封榜 <b>★</b> 一血</div></footer>
+  </section>
+</main>
+</body></html>

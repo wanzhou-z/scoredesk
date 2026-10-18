@@ -1,0 +1,49 @@
+# ---- 本地配置 / 运行数据（都不进仓库）----
+config.json
+contest.json
+contest.json.*
+cookie.txt
+history.json
+state.json
+state.json.*
+archives/
+data/
+live/
+logs/
+tmp/
+snapshots/
+
+# ---- 构建产物 ----
+dist/
+build/
+*.spec
+*.exe
+*.dll
+*.pyd
+*.pyc
+
+# ---- 图片 / 校徽 / 比赛截图 ----
+校徽/
+滚榜图片/
+*.png
+!docs/screenshots/*.png
+*.jpg
+*.jpeg
+*.webp
+
+# ---- Python / 编辑器 / 系统垃圾 ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+.pytest_cache/
+.mypy_cache/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.bak
+*.bak-*
+*.old
+*.old*

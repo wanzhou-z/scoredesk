@@ -1,0 +1,1096 @@
+@font-face{font-family:PTAYaHei;src:url('/font/microsoft.ttc') format('truetype');font-display:swap}
+:root{color-scheme:dark;--accent:#49df97;--accent2:#65b9ff;--danger:#ff7d8c;--panel:#182538;--panel-alt:#1c2b40;--muted:#93a7c6;--ac:#126747;--wrong:#662d39;--pending:#253449;--locked:#3a4153;--row-height:51px;--columns:58px 300px 64px 76px repeat(13,minmax(0,1fr));
+  /* ==== M14 题格「数字上色」==============================================
+     用户要求：颜色改到**数字**上，不再整格填充；边框回归默认、不随题目色变。
+       * --cell-bg     = 题格默认底色（= 未提交格子的底色，两边共用同一个变量，
+                        所以「AC 填充 == 未提交填充」是构造上相等，不是靠调色凑）。
+       * --cell-border = 默认边框色（题目色**不再**出现在边框上）。
+       * --ac-text     = AC 数字：浅绿（#4ADE80），与一血深绿肉眼明显不同。
+       * --wrong-text  = 未通过数字：红（保留 −N 语义）。
+     一血仍是**深绿填充**（--first-blood，#0B5B2E）——普通 AC 只剩浅绿数字，
+     所以「有填充的深绿」只在 AC 一血格出现，两者一眼可分；一血星标继续用题目色。 */
+  --cell-bg:var(--pending);--cell-border:#3c5470;--ac-text:#4ADE80;--wrong-text:#ff7d8c}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{padding:24px;color:#f1f6ff;font-family:PTAYaHei,'Microsoft YaHei',sans-serif;background:radial-gradient(ellipse at top right,#193751 0,transparent 50%),#0b1421}body.overlay{padding:0;background:transparent}
+#app{display:flex;flex-direction:column;transform-origin:top left;gap:16px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;min-height:108px;padding:14px 20px;background:#111d2ee8;border:1px solid #2b405c;border-radius:14px;border-top:3px solid var(--accent2)}.headline{flex:1;min-width:0}.eyebrow{font-size:11px;color:var(--accent2);font-weight:bold;letter-spacing:3px}h1{font-size:clamp(23px,2.2vw,38px);line-height:1.4;margin:3px 0;font-weight:900;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}#subtitle{font-size:12px;color:var(--muted)}.telemetry{display:grid;grid-template-columns:150px 165px;gap:8px 22px;text-align:right}.clock,.freeze-box{display:flex;flex-direction:column;gap:2px}.clock span,.freeze-box span{font-size:11px;color:var(--muted)}.clock strong{font-size:27px;letter-spacing:2px}.freeze-box strong{font-size:25px;color:#ffdb83}.status{grid-column:1/-1;display:flex;justify-content:flex-end;gap:14px;font-size:11px;color:var(--muted);white-space:nowrap}.status b{color:#d9e6fa;font-weight:500}.connection{display:inline-flex;align-items:center;gap:5px}#dot{width:6px;height:6px;border-radius:50%;background:var(--danger)}#dot.ok{background:var(--accent);box-shadow:0 0 8px #49df9780}
+.board-panel{border:1px solid #30445f;border-radius:14px;background:#0f1a2de8;padding:8px 10px 6px;min-height:0;box-shadow:0 8px 35px #0004;overflow:hidden;position:relative}.grid{display:grid;grid-template-columns:var(--columns);align-items:center;column-gap:5px}.header-row{height:34px;color:#95abce;font-size:11px;font-weight:bold;text-align:center;letter-spacing:1px}.header-row .team-head{text-align:left;padding-left:6px}.header-row .num-head{text-align:right;padding-right:5px}.problem-head{margin:0 1px;padding:4px 0;border-radius:5px;background:var(--problem-color);color:var(--problem-text);box-shadow:inset 0 -2px 0 #0003}#viewport{overflow:hidden;position:relative}
+/* M8：控制条。固定在榜单面板右上角、绝对定位（不参与流式布局，因此不占任何行高）。
+   overlay=1 或 ?ctl=0 时 body.no-ctl 直接 display:none —— 元素不进布局，画面与加功能前一致。
+   这里刻意不用 backdrop-filter：它会给控制条建一个合成层，连带着把面板圆角的
+   抗锯齿像素也换一种栅格化路径（实测 overlay 下 20 个像素偏差 1~4 级），
+   而底alpha≈0.8 的模糊本来就几乎看不见，去掉换来"逐像素一致"。
+   视口滚动条一律隐藏：自动/手动滑动都不会有滚动条挤压列宽（列线对齐依赖 --columns 的 1fr）。 */
+#viewport{scrollbar-width:none;-ms-overflow-style:none}
+#viewport::-webkit-scrollbar{width:0;height:0}
+/* M9.1 位置：贴榜单面板右缘、垂直居中（不再是右上角）。top:50% + translateY(-50%) 用的是
+   元素自身高度的一半，父级 #app 上的 transform:scale() 不会改变这个比例，缩放后依然居中。
+   right:10px = 面板 padding 的量，正好贴到面板**内容区**右缘（也是数据表格的最右缘）；
+   悬停只增加 width，左边缘固定、右边缘不动 —— 所以它是**向左展开**，不会向右出界。 */
+#ctl{position:absolute;top:50%;transform:translateY(-50%);right:10px;z-index:6;display:flex;flex-direction:column;align-items:center;gap:6px;padding:7px 5px;border-radius:11px;background:#06101cd9;border:1px solid #40608c;box-shadow:0 4px 14px #0006;cursor:pointer;overflow:hidden;
+  /* M9 空闲自动隐藏：不操作时淡出。宽度 .14s（比透明度快）先收完，淡出过程里
+     不会看到 58px 突然缩到 23px 的跳变，也不会把滚动条闪出来。 */
+  width:20px;opacity:.45;visibility:visible;transition:opacity .18s ease,width .14s ease,visibility 0s linear}
+/* M8 语义保留：鼠标移上去/键盘聚焦就展开整条控制条（向左展开），正常查看时压住的题列最少。 */
+#ctl:hover,#ctl:focus-within,#ctl:focus{width:58px;opacity:1}
+/* M9：显示态（滚轮一动 / 鼠标移到右上角 / 加载后提示期 / 键盘操作）。 */
+#ctl.ctl-show{opacity:1;visibility:visible}
+/* M9：隐藏态 —— 只改 opacity/visibility，不碰 display：元素仍在布局盒里，
+   getBoundingClientRect() 仍有尺寸，但完全透明（opacity:0 的元素不接收命中测试，
+   既不挡内容也点不到），面板宽度与列几何一个像素都不变。 */
+#ctl.ctl-collapsed{opacity:0;visibility:hidden;transition:opacity .3s ease,width .14s ease,visibility 0s linear .3s}
+#ctl.ctl-hot{width:58px}
+/* 隐藏态但鼠标已在右上角热区/控制条上：立刻扩回 58px 但保持透明 —— 指针已经就位，
+   松手即用；不做这一步会先量到 23px 的窄条，hover 命中区跟着跳。 */
+#ctl.ctl-collapsed.ctl-hot{opacity:0;visibility:hidden}
+@media (prefers-reduced-motion:reduce){#ctl{transition:opacity .01s linear,width .01s linear,visibility 0s linear}}
+body.no-ctl #ctl{display:none}
+/* 关掉自动滑动时给个很淡的底色变化，视觉上区分"正在自动滑动 / 已手动接管"。 */
+body.auto-off #ctl{background:#0a1522d9}
+.ctl-auto{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;color:#cfe0f7;cursor:pointer;user-select:none;letter-spacing:1px;white-space:nowrap}
+.ctl-auto input{width:14px;height:14px;margin:0;accent-color:var(--accent);cursor:pointer}
+#ctlSlider{writing-mode:vertical-lr;direction:rtl;width:16px;height:min(196px,32vh);margin:0;accent-color:var(--accent2);cursor:pointer}
+.ctl-pos{font-size:9px;color:#a9bcd8;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* M14：anim=0（自动滑动被动画总开关冻住）时给个黄色提示，用户一眼知道"勾了会不会动"。 */
+body.anim-off #ctl .ctl-auto span{color:#ffdb83}
+body.anim-off #ctl .ctl-auto span::after{content:'⚠'}
+/* M14 强制全量刷新按钮：与整条控制条同宽，收起态被裁掉（同滑块的做法）。 */
+.ctl-full{width:48px;margin:0;padding:2px 3px;font-family:inherit;font-size:9px;line-height:1.3;letter-spacing:.5px;color:#cfe0f7;background:#132238;border:1px solid #40608c;border-radius:6px;cursor:pointer;white-space:nowrap}
+.ctl-full:hover{background:#1b3252;color:#eaf3ff}.ctl-full:disabled{opacity:.6;cursor:default}
+/* M14 数据可能不全：页脚计数变黄字（只在真的不全时出现，正常时不改任何像素）。 */
+#count.warn{color:#ffdb83;font-weight:bold}
+#rows{display:flex;flex-direction:column;gap:4px}
+/* M7 对齐：表头与数据行**必须是同一套列几何** —— 列定义共用 var(--columns)（由 board.js 的 layout()
+   写在 :root 上），行内缩进也要一模一样。以前 .board-row 单独有 padding:0 6px + border-left:5px，
+   它的内容盒比表头窄 17px，13 个 1fr 题列每个窄 1.31px，越往右错得越多（实测 A~F 处错 10px、末尾 5px）。
+   所以把「行内缩进」提成表头/数据行共用的一条规则：谁都不许再单独改 padding/border。 */
+.header-row,.board-row{padding:0 6px;border-left:5px solid transparent}
+.board-row{height:var(--row-height);min-height:var(--row-height);background:var(--panel);border-radius:8px;position:relative}.board-row:nth-child(even){background:var(--panel-alt)}.board-row.blank{background:#15203360}.board-row.medal{}.board-row.medal:nth-child(even){}.rank{text-align:center;font-weight:900;font-size:clamp(17px,1.5vw,26px);font-variant-numeric:tabular-nums;color:#e4eefd}.rank.top1{color:#ffdd88}.rank.top2{color:#cad8ed}.rank.top3{color:#e6ab86}.rank .arrow{display:inline-block;font-size:11px;color:var(--accent);padding-right:2px}.team{display:flex;align-items:center;min-width:0;gap:10px}.logo{height:min(34px,calc(var(--row-height) - 8px));width:min(34px,calc(var(--row-height) - 8px));flex-shrink:0;object-fit:cover;border-radius:50%;background:#f8f8f8;border:1px solid #8aa2c044}.team-text{min-width:0}.team-name{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:clamp(12px,1.2vw,19px);font-weight:900}.student{display:block;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;line-height:1.3}.numeric{text-align:right;padding-right:5px;font-variant-numeric:tabular-nums;font-weight:800}.solved{font-size:clamp(16px,1.45vw,25px)}.penalty{font-size:clamp(13px,1.1vw,19px);color:#d6e2f6}
+.cell{position:relative;height:min(35px,calc(var(--row-height) - 7px));min-width:0;display:flex;align-items:center;justify-content:center;border-radius:5px;font-variant-numeric:tabular-nums;font-size:clamp(10px,.85vw,14px);font-weight:800;overflow:hidden;line-height:1;white-space:nowrap;padding:0 2px;
+  /* M14：默认填充 + 默认边框。以前这里是 `border-top:2px solid var(--problem-color)`，
+     题目色落在边框上 —— 现在边框恒为 --cell-border，题目色只出现在表头与一血星标。 */
+  background:var(--cell-bg);color:#697f9e;border:1px solid var(--cell-border);border-top:2px solid var(--cell-border)}
+/* M14 数字上色：AC 不再整格绿 —— 填充=默认底色，只有 `+`/`+N` 数字是浅绿。 */
+.cell.ac{background:var(--cell-bg);color:var(--ac-text);border:1px solid var(--cell-border);border-top:2px solid var(--cell-border)}
+.cell.ac.has-wrong{background:var(--cell-bg)}
+/* M14：未通过同样只把数字染红（−N 语义不变），填充/边框回归默认。 */
+.cell.wrong{background:var(--cell-bg);color:var(--wrong-text);border:1px solid var(--cell-border);border-top:2px solid var(--cell-border)}
+/* 未提交：默认底色 + 默认边框（与 AC/WA 的填充逐像素相同）。 */
+.cell.pending{background:var(--cell-bg);color:#697f9e;border:1px solid var(--cell-border);border-top:2px solid var(--cell-border)}
+.cell.locked{background:repeating-linear-gradient(135deg,var(--locked),var(--locked) 8px,#414b60 8px,#414b60 9px);color:#f1e0b0;border:1px dashed #8f9ab555}/* `+` / `+N` 一律单行不换行；长号码（+12、+21）靠 tabular-nums 定宽，不被格子裁掉。 */
+.cell .cell-label{display:inline-block;flex:0 0 auto;white-space:nowrap;font-variant-numeric:tabular-nums;letter-spacing:0}
+/* 通过分钟数退到左下角小字：`+N` 后面紧跟一个数字会被误读成 `+237` 这种更长的 N。 */
+.cell .ac-time{position:absolute;bottom:1px;left:4px;font-size:9px;font-weight:500;line-height:1;color:#b8eecf;opacity:.85;pointer-events:none}/* 一血：**保留深绿填充**（--first-blood），与普通 AC 的"默认底色 + 浅绿数字"明显区分；
+   边框也用默认色（曾经是 border-color:var(--problem-color)）；星标仍取题目色（见下面 .star）。 */
+.cell.first-blood{border-color:var(--cell-border);background:var(--first-blood);box-shadow:inset 0 0 0 1px #ffffff22}
+/* 一血星标退到右上角做小标记，并给 `+N` 让出同样的宽度，两者不互相挤压。 */
+.cell.first-blood .cell-label{padding-right:9px}.cell .star{position:absolute;top:0;right:2px;font-size:9px;line-height:1.15;pointer-events:none;color:var(--problem-color);text-shadow:0 0 1px #fff,0 0 3px #000}.cell.flash{animation:cellFlash 1.1s ease-out}.cell.ac-slide{animation:acSlide .75s cubic-bezier(.22,.82,.28,1)}.cell.wrong-flash{animation:wrongFlash .75s ease-out}.cell.pending-pulse{animation:pendingPulse 1.6s ease-in-out infinite}.board-row.rank-rise{animation:rankSlide .9s ease-out}.cell.reveal{animation:reveal .7s ease-out both;animation-delay:var(--reveal-delay,0ms)}
+/* ==== M11 ================================================================
+   ① 判题中（绿/黑交替闪烁，约 0.5s 一个来回 = 1s 周期；刻意压暗，别太刺眼）。
+      用 animation 而不是 CSS 过渡：anim=0 时 body.no-anim 一条规则全关（静止在绿），
+      截图脚本还能用 Web Animations API 把相位钉死做逐像素比对。 */
+.cell.blink{animation:cellBlink 2.4s ease-in-out infinite;will-change:background-color}
+.cell.pending-cell{background:var(--fill-post,#ffb300);color:var(--post-ink,#231a02);border:1px solid #ffa000;border-top:2px solid var(--cell-border)}
+/* ④ 封榜后的提交 = 黄色。整格（只有封榜后提交）用黄底。 */
+.cell.has-post{background:#d9a12e;color:#231a02;border:1px solid #f0c46a}
+/* 同一格里「封榜前的结果 + 封榜后的提交」并排：左段红/绿、右段黄，中间一条 2px 深色刀口，
+   一眼分得清、不糊在一起（顺序固定：先出结果的那段在左）。 */
+.cell.cell-split{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;align-items:stretch;padding:0;gap:0;background:#0b1421;border:1px solid #d9a12e88;border-top:2px solid var(--cell-border)}
+.cell.cell-split>.cell-seg{display:flex;align-items:center;justify-content:center;position:relative;min-width:0;padding:0 2px;border-radius:0}
+.cell.cell-split>[data-seg="wrong"]{background:var(--wrong);color:#ffd4dc}
+.cell.cell-split>[data-seg="ac"]{background:var(--ac);color:#d3ffe6}
+.cell.cell-split>[data-seg="ac"].has-wrong{background:linear-gradient(145deg,#198156,var(--ac))}
+.cell.cell-split>[data-seg="ac"].first-blood{background:var(--first-blood);box-shadow:inset 0 0 0 1px #ffffff22}
+.cell.cell-split>[data-seg="post"]{background:#d9a12e;color:#231a02;font-weight:900;box-shadow:inset 2px 0 0 #0b1421}
+.cell-seg .star{position:absolute;top:0;right:1px;font-size:9px;line-height:1.15;pointer-events:none;color:var(--problem-color);text-shadow:0 0 1px #fff,0 0 3px #000}
+.cell-seg .ac-time{position:absolute;bottom:0;left:2px;font-size:9px;font-weight:500;line-height:1;color:#b8eecf;opacity:.85;pointer-events:none}
+.cell.post-flash{animation:postFlash 1.1s ease-out}
+/* ⑤ 排名上升跟随：被跟随的那一行短暂强调（沿用 rankSlide 风格 + 一道左缘高亮）。 */
+.board-row.rank-follow{box-shadow:inset 4px 0 0 var(--accent),0 0 18px #49df9755}
+.board-row.rank-follow .rank{color:var(--accent);text-shadow:0 0 10px #49df97aa}
+.legend i.pending-cell{background:var(--fill-post,#ffb300);border:1px solid #ffa000}.legend i.post{background:#d9a12e}.legend i.split{background:linear-gradient(90deg,#662d39 50%,#d9a12e 50%)}
+.no-anim .cell.blink{animation:none!important;background:var(--fill-post,#ffb300)!important;color:var(--post-ink,#231a02)!important}
+/* M37（用户 2026-10-18）：判题中 = **琥珀(黄)**，缓慢深浅呼吸，不是绿也不是黑。 */
+@keyframes cellBlink{0%,100%{background-color:var(--fill-post,#ffb300)}50%{background-color:#ffcf4d}}
+@keyframes postFlash{0%{filter:brightness(1.9);box-shadow:0 0 12px #ffd76a}100%{filter:none;box-shadow:none}}
+footer{display:flex;justify-content:space-between;gap:10px;color:var(--muted);font-size:10px;padding:9px 4px 2px;min-height:24px}.legend{display:flex;align-items:center;gap:5px;white-space:nowrap}.legend i{width:8px;height:8px;border-radius:2px;margin-left:8px}.legend .ac{background:#24c47b}.legend .wrong{background:#d05d75}.legend .pending{background:#455773}.legend .locked{background:#dfc382}.legend b{color:#ffdd83}.no-anim *, .no-anim *::before,.no-anim *::after{animation:none!important;transition:none!important}
+@keyframes cellFlash{0%,40%{filter:brightness(1.8);box-shadow:0 0 14px #4cf5a0}100%{filter:none;box-shadow:none}}@keyframes acSlide{0%{transform:translateY(18px);opacity:.25}100%{transform:translateY(0);opacity:1}}@keyframes wrongFlash{0%,35%{filter:brightness(1.65);box-shadow:0 0 10px #ff5c68}100%{filter:none;box-shadow:none}}@keyframes pendingPulse{0%,100%{opacity:.62;box-shadow:0 0 0 transparent}50%{opacity:1;box-shadow:0 0 12px var(--problem-color)}}@keyframes rankSlide{0%{transform:translateX(-22px);background:#254f44}100%{transform:none}}@keyframes reveal{0%{opacity:.3;transform:rotateX(85deg)}100%{opacity:1;transform:none}}
+body.compact #app{gap:9px}body.compact .topbar{min-height:90px;padding:10px 14px}body.compact .clock strong{font-size:23px}body.compact .freeze-box strong{font-size:21px}body.compact .telemetry{grid-template-columns:120px 135px;gap:5px 12px}body.dense .student{display:none}body.dense .cell .ac-time{display:none}body.dense .team-name{font-size:12px}body.dense .rank{font-size:16px}body.dense .solved{font-size:17px}body.dense .penalty{font-size:13px}body.dense .cell{font-size:11px}
+@media(max-width:850px){.telemetry{grid-template-columns:95px 100px;gap:4px 8px}.status{gap:7px}.clock strong,.freeze-box strong{font-size:18px}.topbar{padding:8px 10px}h1{font-size:22px}.student{display:none}}
+
+/* M11 取证开关：body.classic 让 M11 新增的题格样式**完全不参与**渲染，
+   用于 ?overlay=1 的"旧基线 vs 新资源"逐像素比对（证明新增样式默认不动老画面）。
+   M14 追加：classic 也把「数字上色」退回改动前的"整格填充 + 题目色边框"，
+   这样 classic 仍然是**改动前**的那套样式（M11 的 overlay A/B 与 M14 的
+   "新 vs 旧"逐点说明都用它，互不干扰）。 */
+body.classic .cell{background:transparent;border:0;border-top:2px solid color-mix(in srgb,var(--problem-color) 65%,transparent)}
+body.classic .cell.ac{background:var(--ac);color:#d3ffe6;border:1px solid #2cc68855;border-top:2px solid var(--problem-color)}
+body.classic .cell.ac.has-wrong{background:linear-gradient(145deg,#198156,var(--ac))}
+body.classic .cell.wrong{background:var(--wrong);color:#ffd4dc;border:1px solid #b05b6b44;border-top:2px solid var(--problem-color)}
+body.classic .cell.pending{background:var(--pending);color:#697f9e;border:0;border-top:2px solid var(--problem-color)}
+/* 锁榜斜纹：`.cell.locked`(0,2,0) 打不过 `body.classic .cell`(0,2,1)，必须显式再写一遍，
+   否则 classic 下锁榜格会变成透明 + 无虚线边框（M14 的边框重置带来的特异性副作用）。 */
+body.classic .cell.locked{background:repeating-linear-gradient(135deg,var(--locked),var(--locked) 8px,#414b60 8px,#414b60 9px);color:#f1e0b0;border:1px dashed #8f9ab555}
+body.classic .cell.first-blood{border-color:var(--problem-color);background:var(--first-blood)}
+body.classic .cell.blink{animation:none!important;background:var(--pending)!important;color:#697f9e!important}
+body.classic .cell.pending-cell{background:var(--pending);color:#697f9e;border:0;border-top:2px solid var(--problem-color)}
+body.classic .cell.has-post{background:var(--locked)}
+body.classic .cell.cell-split{display:flex;background:var(--locked);border:0;border-top:2px solid var(--problem-color)}
+body.classic .cell.cell-split>.cell-seg{flex:1 1 auto;background:var(--locked)!important;color:#f1e0b0!important;box-shadow:none!important}
+body.classic .cell.cell-split>[data-seg="post"]{background:var(--locked)!important;color:#f1e0b0!important}
+body.classic .board-row.rank-follow{box-shadow:none}
+body.classic .board-row.rank-follow .rank{color:inherit;text-shadow:none}
+
+/* ==========================================================================
+   M17 · 参照榜自托管字体（woff2 内置到 web/fonts/，不引任何网络字体）
+   @font-face 照它的 rank_font_faces.css 抄，只把相对路径改成本地 'fonts/...'。
+   9 个文件：CsgLiveBebasNeue / CsgLiveOutfit / CsgRank Latin(Plus Jakarta Sans 400/500/600/700)
+             / CsgRank SC(Noto Sans SC 400/500/700)。许可与来源见 docs/M17-字体许可说明.md
+   ========================================================================== */
+@font-face{font-family:CsgLiveBebasNeue;font-style:normal;font-weight:400;font-display:swap;src:url('fonts/live_display/bebas-neue-latin-400-normal.woff2') format('woff2')}
+@font-face{font-family:CsgLiveOutfit;font-style:normal;font-weight:500;font-display:swap;src:url('fonts/live_display/outfit-latin-500.woff2') format('woff2')}
+@font-face{font-family:'CsgRank SC';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/csg_rank/noto-sans-sc-chinese-simplified-400-normal.woff2') format('woff2')}
+@font-face{font-family:'CsgRank SC';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/csg_rank/noto-sans-sc-chinese-simplified-500-normal.woff2') format('woff2')}
+@font-face{font-family:'CsgRank SC';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/csg_rank/noto-sans-sc-chinese-simplified-700-normal.woff2') format('woff2')}
+@font-face{font-family:'CsgRank Latin';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/csg_rank/plus-jakarta-sans-latin-400-normal.woff2') format('woff2')}
+@font-face{font-family:'CsgRank Latin';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/csg_rank/plus-jakarta-sans-latin-500-normal.woff2') format('woff2')}
+@font-face{font-family:'CsgRank Latin';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/csg_rank/plus-jakarta-sans-latin-600-normal.woff2') format('woff2')}
+@font-face{font-family:'CsgRank Latin';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/csg_rank/plus-jakarta-sans-latin-700-normal.woff2') format('woff2')}
+
+/* ==========================================================================
+   M17 · 照搬参照榜（CSGrandeur CCPCOJ `outrank/rank`）
+   --------------------------------------------------------------------------
+   原件取自本机抓下来的线上页面：docs/M17-证据/ref/
+     rank.css / rank_page.css / rank_contest_page_density.css + ref-1920x1080.png
+   变量名**沿用它的 `--rank-*`**（尺寸/间距/圆角/字号/字重/颜色），方便以后 1:1 对照；
+   结构也对齐：页面头（.rank-page-header）→ 工具条（.rank-toolbar：队伍排名 + 时间进度条 +
+   筛选计数）→ 榜单面板（.rank-header-row 表头 / .rank-row 数据行 / .rank-footer 图例）。
+
+   分层（与上一版一致，避免任何回退）：
+     ① 上面 1~145 行 = 旧版基线（一字未改），`?classic=1`（body.classic，不挂 body.m16）走这条；
+     ② 本区块 = 参照榜皮肤，只挂 `body.m16`；主题色只在 body.m16.theme-light / .theme-dark 两处。
+   硬约束（不许回退）：题格语义色、列线 0px（表头与数据行共用 --columns）、控制条 20/58px 显隐语义、
+     ?anim=0、?overlay=1、?classic=1、?theme=light|dark、/api/board 键、SSE、"数据可能不全"黄字。
+   题格两种风格：默认 = 我们的「数字上色」语义；`?cells=ref` = 参照榜那种「填充式」题格
+     （见文件末尾 .cells-ref 段）。
+   ========================================================================== */
+
+/* ---------- ②-1 token：照抄 rank.css 的 --rank-*（尺寸/间距/圆角/字号/字重/颜色） ----------
+   注意：尺寸类 token 必须挂在 :root（html）上 —— board.js 把 --columns 写在 html 的
+   inline style 里，里面用 var(--rank-col-width) 等；自定义属性的 var() 是在**声明它的元素**
+   （html）上求值的，挂到 body.m16 会解析不到 → grid-template-columns 直接失效。 */
+:root{
+  /* 尺寸（rank.css :root 原值；密度档见文件末尾 @media） */
+  --rank-col-width:64px;
+  --rank-solve-col-width:72px;
+  --rank-penalty-col-width:72px;
+  --rank-team-col-width:300px;
+  /* M17（滚榜页 /roll）：左栏(名次徽章 + 下面 题数/罚时) 102px、标志列(校徽) 66px、校徽圆直径 44px */
+  --rank-roll-left-col-width:102px;
+  --rank-logo-col-width:66px;
+  --rank-roll-logo-size:44px;
+  --rank-roll-band-top:52px;
+  --rank-roll-band-bottom:34px;
+  /* 滚榜页线上实测的题格配色（stage 皮肤）；?palette=rank 可切回 rank 页 CSS 原值 */
+  /* 默认 = 用户给的滚榜页目标图实测值（rank.css 原值） */
+  --fill-ac:#198754;   --fill-ac-line:#146c43;
+  --fill-wa:#dc3545;   --fill-wa-line:#b02a37;
+  --fill-none:#adb5bd; --fill-none-line:#e9ecef;
+  --fill-first:#007bff;--fill-first-line:#0056b3;
+  --fill-post:#ffb300; --fill-post-line:#ffa000;
+  --roll-gold:#d9a514; --row-line:#cfd4de; --row-line-soft:#e3e6ec; --header-ink:#212529;
+  --rank-problem-col-width:80px;
+  --rank-header-height:60px;
+  --rank-stats-height:32px;
+  --rank-col-gap:5px;
+  --rank-row-gap:8px;
+  --rank-radius-block:6px;
+  --rank-radius-inner:4px;
+  --rank-radius-pill:9999px;
+  --rank-border-radius:var(--rank-radius-block);
+  --rank-border-radius-small:var(--rank-radius-inner);
+  --rank-padding-xs:4px;--rank-padding-sm:8px;--rank-padding-md:12px;--rank-padding-lg:16px;--rank-padding-xl:24px;
+  --rank-font-size-xs:11px;--rank-font-size-sm:13px;--rank-font-size-md:14px;--rank-font-size-lg:16px;
+  --rank-font-size-xl:18px;--rank-font-size-2xl:19px;--rank-font-size-3xl:22px;--rank-font-size-4xl:32px;--rank-font-size-5xl:40px;
+  --rank-font-weight-normal:400;--rank-font-weight-medium:500;--rank-font-weight-semibold:600;
+  --rank-font-weight-bold:700;--rank-font-weight-extrabold:800;--rank-font-weight-black:900;
+  /* 颜色（rank.css token + 线上 stage 皮肤实测值） */
+  --rank-color-primary:#0d6efd;
+  --rank-color-success:#198754;
+  --rank-color-warning:#ffc107;
+  --rank-color-danger:#dc3545;
+  --rank-color-info:#17a2b8;
+  --rank-color-light:#f8f9fa;
+  --rank-color-dark:#343a40;
+  --rank-bg-primary:#ffffff;
+  --rank-bg-secondary:#f8f9fa;
+  --rank-bg-tertiary:#e9ecef;
+  --rank-bg-header:#1e293b;            /* rank.css 的"深色表头块"token（本皮肤按线上 stage 用浅色，见 --rank-header-bg） */
+  --rank-header-bg:#f8f9fb;            /* 线上实测：表头行底 */
+  --rank-frame-line:#d7dde5;           /* 线上实测：表头行下边框 */
+  --rank-text-primary:#333333;
+  --rank-text-secondary:#6c757d;
+  --rank-text-muted:#999999;
+  --rank-text-light:#cbd5e1;
+  --rank-text-white:#ffffff;
+  --rank-text-strong:#0f1520;          /* 线上实测：表头标题色 */
+  --rank-text-body:#444c5c;            /* 线上实测：表头/队名色 */
+  --rank-border-light:#dee2e6;
+  --rank-border-medium:#adb5bd;
+  --rank-border-dark:#6c757d;
+  --rank-border-white:rgba(255,255,255,.3);
+  --rank-line-faint:rgba(15,23,42,.08);
+  --rank-shadow-surface:0 1px 2px rgba(15,23,42,.06);
+  --rank-shadow-float:0 2px 10px rgba(15,23,42,.08);
+  --rank-shadow-overlay:0 4px 18px rgba(15,23,42,.12);
+  --rank-transition-fast:.15s ease;
+  --rank-transition-normal:.3s ease;
+  --rank-z-index-base:500;
+  /* 16:9 铺开（任务书要求；参照榜自身是固定宽容器，这里铺满 16:9 供投影） */
+  --rank-fit-w:min(100vw,calc(100vh * 16 / 9));
+  --rank-pad-x:max(16px,calc((100vw - var(--rank-fit-w)) / 2));
+  --rank-pad-y:clamp(8px,calc(var(--rank-fit-w) * .014),18px);
+  /* 字体替代：它的 CsgRank Latin/SC、Geist、CsgLiveBebasNeue 都不能下载（不引网络字体），
+     用系统里最接近的栈替代；差异见 docs/M17-照搬参照榜.md「字体替代」 */
+  --rank-font-sans:'CsgRank Latin','CsgRank SC',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Microsoft YaHei','PingFang SC',sans-serif;
+  --rank-font-mono:'CsgRank Latin',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;
+  --rank-font-narrow:CsgLiveBebasNeue,'Bahnschrift Condensed','Arial Narrow',var(--rank-font-mono);
+  --rank-font-display:CsgLiveOutfit,'CsgRank Latin',var(--rank-font-sans);
+}
+/* 我们自己的题格语义色（默认 cells 模式；两套主题完全相同 = 任务书 §2.2 硬约束）。
+   放在 body.m16 上，classic（旧视觉）不受影响。 */
+body.m16{
+  --cell-bg:#253449;--cell-border:#3c5470;--ac-text:#4ADE80;--wrong-text:#ff7d8c;
+  --first-blood:#0B5B2E;--post:#d9a12e;--pending:#253449;--ac:#126747;--wrong:#662d39;
+  --locked:#3a4153;--knife:#0b1421;--cell-ink:#697f9e;
+  --cell-ring:0 0 0 1px var(--cell-border);
+  --cell-shadow:0 1px 1px rgba(0,0,0,.55);
+  --post-ink:#231a02;   /* 封榜琥珀格字色：默认深色字（#ffb300 上 ≈9:1）；?postink=white 可照抄参照榜原值 */
+  --rank-rise-bg:#e3f3e8;
+}
+/* 浅色（默认）：就是线上 stage 皮肤的白纸 + 浅色表头 */
+body.m16.theme-light{
+  color-scheme:light;
+  --page-bg:#ffffff;
+  --panel-bg:#ffffff;
+  --chrome-bg:#ffffff;
+  --row-odd:#ffffff; --row-even:var(--rank-bg-secondary);
+  --card-border:var(--rank-border-light);
+  --text:var(--rank-text-primary); --text-2:var(--rank-text-body); --muted:var(--rank-text-secondary);
+  --accent:var(--rank-color-primary);
+  --warn-text:#b45309; --warn-strong:#7c2d12; --warn-bg:#fef3c7; --warn-line:#f59e0b;
+  --freeze-solid:#a01f2b; --finish-solid:#14532d;
+  --medal-gold:linear-gradient(135deg,#ffd700 0%,#ffb300 100%);
+  --medal-gold-border:#ff8f00;
+  --medal-silver:linear-gradient(135deg,#c0c0c0 0%,#a8a8a8 100%);
+  --medal-silver-border:#909090;
+  --medal-bronze:linear-gradient(135deg,#cd7f32 0%,#b87333 100%);
+  --medal-bronze-border:#9d5f1f;
+  --num-ink:#40474e;
+}
+/* 深色（?theme=dark）：参照榜自己的深色皮肤是 --rank-header-bg:#172033，
+   这里沿用它的深色底 + 我们原来的深色数据矩阵 */
+body.m16.theme-dark{
+  color-scheme:dark;
+  --page-bg:#0b1421;
+  --panel-bg:#101c2f;
+  --chrome-bg:#101c2f;
+  --rank-header-bg:#172033;
+  --rank-frame-line:#25374f;
+  --rank-bg-secondary:#1d2a40;
+  --rank-bg-tertiary:#22304a;
+  --row-odd:#172133; --row-even:#1d2a40;
+  --card-border:#25374f;
+  --text:#f1f6ff; --text-2:#d6e2f6; --muted:#9aaaca;
+  --rank-text-strong:#eaf2ff; --rank-text-body:#d6e2f6; --rank-text-secondary:#9aaaca;
+  --accent:#43d17a;
+  --warn-text:#ffdb83; --warn-strong:#ffdb83; --warn-bg:#3a2d0e; --warn-line:#8a6a15;
+  --freeze-solid:#8f1d24; --finish-solid:#14532d;
+  --medal-gold:linear-gradient(135deg,#ffd700 0%,#ffb300 100%);
+  --medal-gold-border:#ff8f00;
+  --medal-silver:linear-gradient(135deg,#c0c0c0 0%,#a8a8a8 100%);
+  --medal-silver-border:#909090;
+  --medal-bronze:linear-gradient(135deg,#cd7f32 0%,#b87333 100%);
+  --medal-bronze-border:#9d5f1f;
+  --num-ink:#d6e2f6;
+  --rank-rise-bg:#254f44;
+}
+
+/* ---------- ②-2 页面壳 / 页面头 / 工具条（对照 ref-1920x1080.png 顶部） ---------- */
+body.m16{padding:var(--rank-pad-y) var(--rank-pad-x);background:var(--page-bg);color:var(--text);
+  font-family:var(--rank-font-sans);font-size:var(--rank-font-size-lg);line-height:1.5;
+  -webkit-font-smoothing:antialiased;overflow:hidden}
+body.m16 #app{gap:var(--rank-padding-sm);transform-origin:top left}
+/* 浏览器/OS 的 emoji 字体在内联 SVG 之外不参与（图标全部内联 SVG） */
+body.m16 .rank-chrome{display:flex;flex-direction:column;gap:var(--rank-padding-xs);min-height:0;
+  align-items:stretch;justify-content:flex-start}
+
+/* 页面头：白底 + 底部细线 + 左侧图标方块 + 标题；右侧状态 chip */
+body.m16 .rank-page-header{display:flex;align-items:center;justify-content:space-between;gap:var(--rank-padding-md);
+  padding:var(--rank-padding-sm) var(--rank-padding-lg);background:var(--chrome-bg);
+  border:1px solid var(--rank-frame-line);border-radius:var(--rank-radius-block);
+  box-shadow:var(--rank-shadow-surface)}
+body.m16 .rank-page-title{display:flex;align-items:center;gap:var(--rank-padding-sm);min-width:0}
+body.m16 .rank-page-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+  width:30px;height:30px;border-radius:var(--rank-radius-inner);color:#1d4f86;
+  background:#eef5ff;border:1px solid #cfe0f5}
+body.m16 .rank-page-title-text{min-width:0}
+body.m16 .rank-page-header h1{margin:0;font-family:var(--rank-font-display);font-size:var(--rank-font-size-3xl);line-height:1.15;
+  font-weight:var(--rank-font-weight-bold);color:var(--rank-text-strong);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.m16 #subtitle{display:block;font-size:var(--rank-font-size-sm);color:var(--rank-text-secondary);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.m16 .rank-page-actions{display:flex;align-items:center;gap:var(--rank-padding-sm);flex:0 0 auto}
+body.m16 .rank-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;
+  font-size:var(--rank-font-size-sm);color:var(--rank-text-secondary);
+  background:var(--rank-bg-secondary);border:1px solid var(--rank-border-light);
+  border-radius:var(--rank-radius-inner);white-space:nowrap}
+body.m16 .rank-chip b{color:var(--rank-text-body);font-weight:var(--rank-font-weight-semibold);
+  font-variant-numeric:tabular-nums}
+body.m16 #dot{width:8px;height:8px;border-radius:50%;background:var(--rank-color-danger);flex:0 0 auto}
+body.m16.theme-light #dot.ok{background:var(--rank-color-success);box-shadow:0 0 0 3px rgba(25,135,84,.16)}
+body.m16.theme-dark #dot.ok{background:#49df97;box-shadow:0 0 8px rgba(73,223,151,.35)}
+
+/* 工具条：队伍排名 / Team Rank + 进度条 + 时间 + 筛选计数 */
+body.m16 .rank-toolbar{display:flex;align-items:center;gap:var(--rank-padding-md);
+  padding:var(--rank-padding-sm) var(--rank-padding-lg);background:var(--chrome-bg);
+  border:1px solid var(--rank-frame-line);border-radius:var(--rank-radius-block);
+  box-shadow:var(--rank-shadow-surface)}
+body.m16 .rank-toolbar-title{display:flex;flex-direction:column;flex:0 0 auto;line-height:1.15;
+  padding-right:var(--rank-padding-md);border-right:1px solid var(--rank-border-light)}
+body.m16 .rank-toolbar-title b{font-size:var(--rank-font-size-lg);font-weight:var(--rank-font-weight-bold);
+  color:var(--rank-text-strong)}
+body.m16 .rank-toolbar-title small{font-size:var(--rank-font-size-xs);color:var(--rank-text-secondary)}
+body.m16 .rank-toolbar-controls{display:flex;align-items:center;gap:var(--rank-padding-md);
+  flex:1 1 auto;min-width:0}
+/* 进度条：细蓝条 + 右端白色圆钮（照 ref 截图） */
+body.m16 .rank-progress{position:relative;flex:1 1 auto;min-width:60px;height:22px;display:flex;align-items:center}
+body.m16 .rank-progress::before{content:'';position:absolute;left:0;right:0;top:50%;height:6px;
+  transform:translateY(-50%);border-radius:var(--rank-radius-pill);background:var(--rank-bg-tertiary)}
+body.m16 .rank-progress-fill{position:relative;height:6px;width:0%;
+  border-radius:var(--rank-radius-pill);background:var(--rank-color-primary);transition:width var(--rank-transition-normal)}
+body.m16 .rank-progress-knob{position:absolute;top:50%;left:0;width:15px;height:15px;margin-left:-7px;
+  transform:translateY(-50%);border-radius:50%;background:#fff;border:2px solid var(--rank-color-primary);
+  box-shadow:var(--rank-shadow-surface);transition:left var(--rank-transition-normal)}
+body.m16 .rank-time{display:flex;flex-direction:column;align-items:flex-end;flex:0 0 auto;line-height:1.15}
+body.m16 .rank-time b{font-family:var(--rank-font-narrow);font-size:var(--rank-font-size-3xl);letter-spacing:.02em;
+  font-weight:var(--rank-font-weight-bold);color:var(--rank-text-strong);font-variant-numeric:tabular-nums}
+body.m16 .rank-time small{font-size:var(--rank-font-size-xs);color:var(--rank-text-secondary);
+  font-variant-numeric:tabular-nums}
+body.m16 .rank-time small i{font-style:normal;font-family:var(--rank-font-mono)}
+body.m16 .rank-filter-chip{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
+  padding:4px 10px;font-size:var(--rank-font-size-sm);color:var(--rank-text-body);
+  background:var(--rank-bg-secondary);border:1px solid var(--rank-border-light);
+  border-radius:var(--rank-radius-inner);white-space:nowrap}
+body.m16 .rank-filter-chip svg{color:var(--rank-text-secondary)}
+body.m16 #count{font-variant-numeric:tabular-nums}
+body.m16 #count.warn{color:var(--warn-text);font-weight:var(--rank-font-weight-bold)}
+
+/* ---------- ②-3 榜单面板 / 表头行（.rank-header-row） ---------- */
+body.m16 .rank-panel{padding:0;background:var(--panel-bg);border:1px solid var(--rank-frame-line);
+  border-radius:var(--rank-radius-block);box-shadow:var(--rank-shadow-surface);overflow:hidden;position:relative}
+/* 表头与数据行**共用同一套列几何**（列线中心偏差 0px 靠这条）：同一 --columns、同一左右 padding，
+   并且都要清零旧基线给这两行的 border-left:5px（否则表头比数据行多缩进 5px）。 */
+body.m16 .grid{display:grid;grid-template-columns:var(--columns);column-gap:var(--rank-col-gap);align-items:center}
+body.m16 .rank-header-row,
+body.m16 .board-row{padding:0 var(--rank-padding-lg);border-left:0}
+body.m16 .rank-header-row{background:var(--rank-header-bg);border-bottom:1px solid var(--rank-frame-line);
+  padding-top:var(--rank-padding-sm);padding-bottom:0;min-height:var(--rank-header-height);
+  font-size:var(--rank-font-size-md);font-weight:var(--rank-font-weight-semibold);color:var(--rank-text-secondary)}
+/* 表头每一列：线上 stage 皮肤是"浅底 + 深字"（.rank-header-row .rank-col 的深色块 token
+   --rank-bg-header:#1e293b 在本页被 stage 皮肤覆盖）。想做深色小块见 docs/M17-照搬参照榜.md
+   的「表头两版」：把 .rank-header-row .rank-col 的 background 换成 var(--rank-bg-header)、
+   文字换成 var(--rank-text-white) 即可（证据图 M17-证据/header-solid-1920x1080.png）。 */
+body.m16 .rank-header-row>.rank-col{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  height:var(--rank-header-height);border-radius:var(--rank-radius-inner);text-align:center;
+  line-height:1.15;white-space:nowrap;overflow:visible;color:var(--rank-text-body)}
+body.m16 .rank-header-row>.rank-col>small{font-size:var(--rank-font-size-xs);font-weight:var(--rank-font-weight-semibold);
+  color:var(--rank-text-secondary);margin-top:2px;font-variant-numeric:tabular-nums}
+body.m16 .rank-header-row>.rank-col>b{font-size:var(--rank-font-size-lg);font-weight:var(--rank-font-weight-bold);
+  color:var(--rank-text-body)}
+/* 题目列表头：字母 + 该题统计（M23 起恢复「AC 队数/提交总数」，见下）；**不再有每题一色的色条**
+   （用户 2026-10-17：题目字母下面的颜色线删掉，题目不再有专属色，表头也不用 --problem-color）。 */
+body.m16 .rank-header-row .problem-head{background:transparent;box-shadow:none}
+body.m16 .rank-header-row .problem-head>.problem-header-title{font-size:var(--rank-font-size-2xl);
+  font-weight:var(--rank-font-weight-black);color:var(--rank-text-strong);
+  font-family:var(--rank-font-mono);letter-spacing:.02em}
+body.m16 .rank-header-row .problem-head>.problem-header-stats{font-size:11px;
+  font-weight:var(--rank-font-weight-semibold);color:var(--rank-text-muted);margin-top:1px;
+  font-family:var(--rank-font-mono);font-variant-numeric:tabular-nums;letter-spacing:0}
+body.m16 .rank-header-row .head-team{align-items:flex-start;justify-content:center;padding-left:2px;
+  text-align:left;color:var(--rank-text-body);font-weight:var(--rank-font-weight-semibold)}
+body.m16 .rank-header-row .problem-head:hover{box-shadow:none}
+
+/* ---------- ②-4 数据行（.rank-row）：白/斑马纹 + hover + 行分隔 ---------- */
+body.m16 #viewport{overflow:hidden;position:relative;scrollbar-width:none;-ms-overflow-style:none}
+body.m16 #viewport::-webkit-scrollbar{width:0;height:0}
+body.m16 #rows{display:flex;flex-direction:column;gap:var(--rank-row-gap);padding:var(--rank-row-gap) 0}
+body.m16 .board-row{background:var(--row-odd);border-radius:var(--rank-radius-inner);
+  min-height:var(--row-height);height:var(--row-height);align-items:center;border-left:0}
+/* 旧基线给 .board-row 有 border-left:5px（老皮肤用它做奖牌色条）；新皮肤奖牌改成行顶细带，
+   必须显式清零，否则表头与数据行的内容起点差 5px（列线中心偏差就不是 0 了）。 */
+body.m16 .board-row:nth-child(even){background:var(--row-even)}
+body.m16 .board-row:hover{background:var(--rank-bg-secondary);box-shadow:var(--rank-shadow-float)}
+body.m16.theme-dark .board-row:hover{background:#22304a}
+body.m16 .board-row.blank{background:transparent;box-shadow:none}
+body.m16 .board-row:not(.blank){border-bottom:1px solid var(--rank-line-faint)}
+/* 金/银/铜：`.medal` 由 board.js 的 medalFor(rank, team_id) 决定（带非空 team_ids 的奖项只认名单、
+   count 不参与；名单为空才按名次区间）。参照榜的奖牌是"行首名次徽章 + 行顶细带"，
+   这里沿用它的做法：顶部 3px 奖牌色带（--medal-color 由 JS 写在行上）。 */
+/* 行级奖牌装饰：用户要求删掉（只保留名次块的金银铜） */
+body.m16 .board-row.medal:hover{box-shadow:var(--rank-shadow-float)}
+
+/* 名次徽章（.rank-item / .gold / .silver / .bronze，照 rank.css） */
+body.m16 .rank-item,body.m16 .solve-item,body.m16 .penalty-item,body.m16 .problem-item{
+  display:flex;align-items:center;justify-content:center;border-radius:var(--rank-radius-inner);
+  font-weight:var(--rank-font-weight-extrabold);flex-shrink:0;overflow:hidden;
+  height:var(--rank-stats-height);transition:var(--rank-transition-fast)}
+body.m16 .board-row>.rank{background-color:var(--rank-bg-tertiary);color:#495057;border:2px solid var(--rank-border-light);
+  box-shadow:0 2px 6px rgba(0,0,0,.1),inset 0 1px 0 rgba(255,255,255,.8);
+  font-family:var(--rank-font-mono);font-size:var(--rank-font-size-2xl);font-weight:var(--rank-font-weight-black);
+  font-variant-numeric:tabular-nums;text-align:center}
+body.m16 .board-row>.rank.top1{background-color:#ffb300;background-image:var(--medal-gold);color:#1a1a1a;border-color:var(--medal-gold-border);
+  box-shadow:0 2px 8px rgba(255,179,0,.5),inset 0 1px 0 rgba(255,255,255,.4)}
+body.m16 .board-row>.rank.top2{background-color:#a8a8a8;background-image:var(--medal-silver);color:#1a1a1a;border-color:var(--medal-silver-border);
+  box-shadow:0 2px 8px rgba(144,144,144,.4),inset 0 1px 0 rgba(255,255,255,.3)}
+body.m16 .board-row>.rank.top3{background-color:#b87333;background-image:var(--medal-bronze);color:#fff;border-color:var(--medal-bronze-border);
+  box-shadow:0 2px 8px rgba(157,95,31,.4),inset 0 1px 0 rgba(255,255,255,.2)}
+body.m16 .board-row>.rank .arrow{display:inline-block;font-size:.62em;color:#0f5132;padding-right:2px;font-style:normal}
+/* 解题 / 罚时（solve-item / penalty-item，照 rank.css 的浅色底 + 深色字） */
+body.m16 .board-row>.solved{background:rgba(14,165,233,.06);color:#0c4a6e;border:1px solid rgba(14,165,233,.35);
+  width:var(--rank-solve-col-width);font-family:var(--rank-font-mono);font-size:var(--rank-font-size-2xl);
+  font-weight:var(--rank-font-weight-black);font-variant-numeric:tabular-nums;text-align:center}
+body.m16 .board-row>.penalty{background:rgba(234,88,12,.06);color:#9a3412;border:1px solid rgba(234,88,12,.35);
+  width:var(--rank-penalty-col-width);font-family:var(--rank-font-mono);font-size:var(--rank-font-size-2xl);
+  font-weight:var(--rank-font-weight-black);font-variant-numeric:tabular-nums;text-align:center}
+body.m16.theme-dark .board-row>.rank{background-color:#2b3a54;color:#e2e8f0;border-color:#3b4f6d}
+body.m16.theme-dark .board-row>.rank.top1{background-color:#ffb300;color:#1a1a1a}
+body.m16.theme-dark .board-row>.rank.top2{background-color:#a8a8a8;color:#1a1a1a}
+body.m16.theme-dark .board-row>.rank.top3{background-color:#b87333;color:#fff}
+body.m16.theme-dark .board-row>.solved{background:rgba(56,189,248,.12);color:#bae6fd;border-color:rgba(56,189,248,.35)}
+body.m16.theme-dark .board-row>.penalty{background:rgba(251,146,60,.12);color:#fed7aa;border-color:rgba(251,146,60,.35)}
+
+/* 队伍：队名（最重）+ 学号（最轻） */
+body.m16 .team{display:flex;align-items:center;gap:var(--rank-padding-sm);min-width:0}
+body.m16 .logo{height:calc(var(--rank-stats-height) - 4px);width:calc(var(--rank-stats-height) - 4px);
+  flex-shrink:0;object-fit:cover;border-radius:var(--rank-radius-inner);background:#fff;
+  border:1px solid var(--rank-border-light)}
+body.m16 .team-text{min-width:0}
+body.m16 .team-name{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:var(--rank-font-size-xl);font-weight:var(--rank-font-weight-semibold);color:var(--rank-text-body)}
+body.m16.theme-dark .team-name{color:var(--text)}
+body.m16 .student{display:block;font-size:var(--rank-font-size-xs);color:var(--rank-text-secondary);
+  font-family:var(--rank-font-mono);font-variant-numeric:tabular-nums;line-height:1.25}
+
+/* ---------- ②-5 题格（默认 = 我们的「数字上色」语义；?cells=ref 见文件末尾） ---------- */
+body.m16.cells-ours .cell{position:relative;height:var(--rank-stats-height);min-width:0;
+  display:flex;align-items:center;justify-content:center;border-radius:var(--rank-radius-inner);
+  font-family:var(--rank-font-mono);font-size:var(--rank-font-size-2xl);
+  font-weight:var(--rank-font-weight-black);font-variant-numeric:tabular-nums;
+  letter-spacing:.01em;overflow:hidden;line-height:1;white-space:nowrap;padding:0 2px;
+  background:var(--cell-bg);color:var(--cell-ink);text-shadow:var(--cell-shadow);
+  border:1px solid var(--cell-border);border-top:2px solid var(--cell-border);
+  /* 1px 外圈用同一个默认边框色：浅色行底是白的时，M14 的边框取样带会 floor 到格子顶边上方一行 */
+  box-shadow:var(--cell-ring)}
+body.m16.cells-ours .cell.ac{background:var(--cell-bg);color:var(--ac-text);
+  border:1px solid var(--cell-border);border-top:2px solid var(--cell-border)}
+body.m16.cells-ours .cell.ac.has-wrong{background:var(--cell-bg)}
+body.m16.cells-ours .cell.wrong{background:var(--cell-bg);color:var(--wrong-text);
+  border:1px solid var(--cell-border);border-top:2px solid var(--cell-border)}
+body.m16.cells-ours .cell.pending{background:var(--cell-bg);color:var(--cell-ink);
+  border:1px solid var(--cell-border);border-top:2px solid var(--cell-border)}
+body.m16.cells-ours .cell.first-blood{border-color:var(--cell-border);background:var(--first-blood);
+  box-shadow:var(--cell-ring),inset 0 0 0 1px #ffffff22}
+/* 一血格数字用浅色（深绿填充上 7.54:1；AC 浅绿在其上只有 4.73:1）。语义（深绿填充 + 题目色星标）未变 */
+body.m16.cells-ours .cell.first-blood>.cell-label{color:#d3ffe6}
+body.m16.cells-ours .cell>.cell-label{display:inline-block;flex:0 0 auto;white-space:nowrap;
+  font-variant-numeric:tabular-nums;letter-spacing:0;-webkit-text-stroke:.3px rgba(0,0,0,.45)}
+body.m16.cells-ours .cell.first-blood>.cell-label{padding-right:9px}
+body.m16.cells-ours .cell .star{position:absolute;top:0;right:2px;font-size:9px;line-height:1.15;
+  pointer-events:none;color:var(--problem-color);text-shadow:0 0 1px #fff,0 0 3px #000}
+body.m16.cells-ours .cell .ac-time{position:absolute;bottom:1px;left:3px;font-size:var(--rank-font-size-xs);
+  font-weight:var(--rank-font-weight-medium);line-height:1;color:#b8eecf;opacity:.85;
+  pointer-events:none;font-family:var(--rank-font-mono)}
+/* 判题中 = 整格绿黑闪烁（≈1s 周期，硬约束）；封榜后 = 黄底；锁榜 = ? */
+body.m16.cells-ours .cell.pending-cell{background:#2ecc71;color:#062b1b;border:1px solid #2ecc71cc;
+  border-top:2px solid var(--cell-border)}
+body.m16.cells-ours .cell.has-post{background:var(--post);color:#231a02;border:1px solid #f0c46a;text-shadow:none}
+body.m16.cells-ours .cell.locked{background-color:var(--locked);
+  background-image:repeating-linear-gradient(135deg,transparent 0,transparent 8px,rgba(255,255,255,.07) 8px,rgba(255,255,255,.07) 9px);
+  color:#f1e0b0;border:1px dashed #8f9ab555;text-shadow:none}
+/* 封榜前 + 封榜后同格 = 两段并排，中间 2px 深色刀口 */
+body.m16.cells-ours .cell.cell-split{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;align-items:stretch;
+  padding:0;gap:0;background:var(--knife);border:1px solid #d9a12e88;border-top:2px solid var(--cell-border)}
+body.m16.cells-ours .cell.cell-split>.cell-seg{display:flex;align-items:center;justify-content:center;
+  position:relative;min-width:0;padding:0 2px;border-radius:0}
+body.m16.cells-ours .cell.cell-split>[data-seg="wrong"]{background:var(--wrong);color:#ffd4dc;text-shadow:none}
+body.m16.cells-ours .cell.cell-split>[data-seg="ac"]{background:var(--ac);color:#d3ffe6;text-shadow:none}
+body.m16.cells-ours .cell.cell-split>[data-seg="ac"].has-wrong{background:linear-gradient(145deg,#198156,var(--ac))}
+body.m16.cells-ours .cell.cell-split>[data-seg="ac"].first-blood{background:var(--first-blood);
+  box-shadow:inset 0 0 0 1px #ffffff22}
+body.m16.cells-ours .cell.cell-split>[data-seg="post"]{background:var(--post);color:#231a02;
+  font-weight:var(--rank-font-weight-black);box-shadow:inset 2px 0 0 var(--knife)}
+body.m16.cells-ours .cell-seg .star{position:absolute;top:0;right:1px;font-size:9px;line-height:1.15;
+  pointer-events:none;color:var(--problem-color);text-shadow:0 0 1px #fff,0 0 3px #000}
+body.m16.cells-ours .cell-seg .ac-time{position:absolute;bottom:0;left:2px;font-size:var(--rank-font-size-xs);
+  font-weight:var(--rank-font-weight-medium);line-height:1;color:#b8eecf;opacity:.85;pointer-events:none}
+body.m16.cells-ours .cell.post-flash{animation:postFlash 1.1s ease-out}
+/* 排名上升跟随：整行短暂强调（沿用旧语义，配色换成主色） */
+body.m16 .board-row.rank-follow{box-shadow:inset 4px 0 0 var(--accent),0 0 18px rgba(13,110,253,.28)}
+body.m16 .board-row.rank-follow .rank{color:#0b5ed7;text-shadow:0 0 10px rgba(13,110,253,.25)}
+body.m16.theme-dark .board-row.rank-follow .rank{color:#7fe0a8;text-shadow:0 0 10px rgba(67,209,122,.35)}
+
+/* ---------- ②-6 动效：统一 120~200ms 档（判题中闪烁仍 1s 周期） ---------- */
+body.m16.cells-ours .cell.flash{animation:cellFlash .45s ease-out}
+body.m16.cells-ours .cell.ac-slide{animation:acSlide .3s cubic-bezier(.22,.82,.28,1)}
+body.m16.cells-ours .cell.wrong-flash{animation:wrongFlash .4s ease-out}
+body.m16.cells-ours .cell.pending-pulse{animation:pendingPulse 2.4s ease-in-out infinite}
+@keyframes rankSlideM16{0%{transform:translateX(-22px);background:var(--rank-rise-bg)}100%{transform:none}}
+body.m16 .board-row.rank-rise{animation:rankSlideM16 .5s ease-out}
+body.m16.cells-ours .cell.reveal{animation:reveal .32s ease-out both;animation-delay:calc(var(--reveal-delay,0ms) * .3)}
+body.m16.cells-ours .cell.blink{animation:cellBlink 1s linear infinite}
+/* ?anim=0 时基础层有一条 .no-anim .cell.blink{background:#2ecc71!important}（改动前就有），
+   "锁榜+封榜后+判题中"的文字原本只有 1.6:1 —— 这里把 no-anim 下闪烁格文字改成深墨绿（8.8:1） */
+body.m16.no-anim .cell.blink{color:#062b1b}
+/* 同上：no-anim 下琥珀格（.pro-judging/.has-post）要保持琥珀底 + 深色字（?postink=white 时白字） */
+body.m16.no-anim .cell.pro-judging{animation:none;background:#ffb300!important;color:var(--post-ink,#231a02)}
+body.m16 #viewport{flex:0 1 auto;min-height:0}
+
+/* ---------- ②-7 页脚（图例） ---------- */
+body.m16 .rank-footer{display:flex;align-items:center;flex-wrap:wrap;gap:var(--rank-padding-sm);
+  padding:var(--rank-padding-sm) var(--rank-padding-lg);border-top:1px solid var(--rank-line-faint);
+  color:var(--rank-text-secondary);font-size:var(--rank-font-size-xs);min-height:0;flex:0 0 auto}
+body.m16 .legend{display:flex;align-items:center;gap:2px var(--rank-padding-sm);flex-wrap:wrap;white-space:normal}
+body.m16 .legend i{width:10px;height:10px;border-radius:2px;margin-left:var(--rank-padding-sm);
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.18);display:inline-block}
+body.m16 .legend .ac{background:var(--ac-text)}
+body.m16 .legend .wrong{background:var(--wrong-text)}
+body.m16 .legend .pending{background:var(--cell-bg);box-shadow:inset 0 0 0 1px var(--cell-border)}
+body.m16 .legend .locked{background:var(--locked)}
+body.m16 .legend b{color:var(--rank-text-primary);font-weight:var(--rank-font-weight-bold)}
+body.m16.theme-dark .legend b{color:var(--text)}
+
+/* ---------- ②-8 控制条（宽度语义 20px/58px 不动，只换参照榜的按钮语言） ---------- */
+body.m16 #ctl{padding:7px 5px;gap:6px;border-radius:var(--rank-radius-block);background:var(--chrome-bg);
+  border:1px solid var(--rank-border-light);box-shadow:var(--rank-shadow-float)}
+body.m16.auto-off #ctl{background:var(--rank-bg-secondary)}
+body.m16.theme-dark.auto-off #ctl{background:#0a1522}
+body.m16 .ctl-auto{font-size:var(--rank-font-size-xs);color:var(--rank-text-body);gap:4px;letter-spacing:.02em}
+body.m16 .ctl-auto input{accent-color:var(--rank-color-primary)}
+body.m16 .ctl-pos{font-size:var(--rank-font-size-xs);color:var(--rank-text-body);
+  font-family:var(--rank-font-mono);font-variant-numeric:tabular-nums}
+body.m16 .ctl-full{font-size:var(--rank-font-size-xs);color:var(--rank-text-body);background:var(--rank-bg-secondary);
+  border:1px solid var(--rank-border-light);border-radius:var(--rank-radius-inner)}
+body.m16 .ctl-full:hover{background:#e9ecef;border-color:var(--rank-border-medium)}
+body.m16.anim-off #ctl .ctl-auto span{color:var(--warn-strong)}
+body.m16 #ctlSlider{accent-color:var(--rank-color-primary)}
+
+/* ---------- ②-9 密度档：照抄参照榜 rank_contest_page_density.css 的三档（0/1/2） ---------- */
+@media (max-width:1799px){ /* = 参照榜 density 2 */
+  :root{
+    --rank-col-width:58px;--rank-solve-col-width:65px;--rank-penalty-col-width:65px;--rank-team-col-width:260px;--rank-problem-col-width:73px;
+    --rank-header-height:53px;--rank-stats-height:28px;--rank-col-gap:4px;--rank-row-gap:6px;--rank-padding-lg:13px;
+    --rank-font-size-xs:10px;--rank-font-size-sm:12px;--rank-font-size-md:13px;--rank-font-size-lg:14px;
+    --rank-font-size-xl:16px;--rank-font-size-2xl:17px;--rank-font-size-3xl:20px;--rank-font-size-4xl:28px;
+  }
+}
+@media (max-width:1279px){ /* = 参照榜 density 1 */
+  :root{
+    --rank-col-width:52px;--rank-solve-col-width:58px;--rank-penalty-col-width:58px;--rank-team-col-width:220px;--rank-problem-col-width:66px;
+    --rank-header-height:46px;--rank-stats-height:24px;--rank-col-gap:3px;--rank-row-gap:5px;--rank-padding-lg:10px;
+    --rank-font-size-xs:9px;--rank-font-size-sm:11px;--rank-font-size-md:12px;--rank-font-size-lg:13px;
+    --rank-font-size-xl:14px;--rank-font-size-2xl:15px;--rank-font-size-3xl:18px;
+  }
+}
+@media (max-width:1023px){ /* = 参照榜 density 0 */
+  :root{
+    --rank-col-width:48px;--rank-solve-col-width:54px;--rank-penalty-col-width:54px;--rank-team-col-width:180px;--rank-problem-col-width:60px;
+    --rank-header-height:42px;--rank-stats-height:22px;--rank-col-gap:3px;--rank-row-gap:4px;--rank-padding-lg:8px;
+    --rank-font-size-xs:8px;--rank-font-size-sm:10px;--rank-font-size-md:11px;--rank-font-size-lg:11px;
+    --rank-font-size-xl:12px;--rank-font-size-2xl:13px;--rank-font-size-3xl:16px;
+  }
+}
+body.m16.compact #app{gap:var(--rank-padding-xs)}
+body.m16.dense .student{display:none}
+body.m16.dense .cell .ac-time{display:none}
+body.m16.dense .team-name{font-size:var(--rank-font-size-lg)}
+
+/* ---------- ②-10 ?cells=ref：参照榜那种"填充式"题格（默认仍是我们的数字上色） ----------
+   线上 rank.css 的题格：.problem-item{width:80px;font-size:2xl;font-weight:900;height:32px}
+     .pro-ac{#198754 白字} .pro-wa{#dc3545 白字} .pro-pending{#ffb300 白字}
+     .pro-none{#adb5bd 深字} .pro-first-blood-regular{#007bff 白字 + 金色星}
+   这里**只换填充/字色**，文案与语义（AC/WA/一血/判题中/封榜黄/两段式/锁榜）一字不改。 */
+/* 默认（参照榜式）格子的**几何与字体**：和 ?cells=ours 共用同一套尺寸/等宽数字，
+   只是填充/字色按参照榜（.pro-none 灰 / .pro-ac 绿 / .pro-wa 红 / .pro-pending 琥珀）。 */
+body.m16 .cell{position:relative;height:min(var(--rank-stats-height),calc(var(--rank-roll-band-bottom) - 4px));min-width:0;display:flex;
+  align-items:center;justify-content:center;border-radius:var(--rank-radius-inner);
+  font-family:var(--rank-font-mono);font-size:var(--rank-font-size-2xl);
+  font-weight:var(--rank-font-weight-black);font-variant-numeric:tabular-nums;letter-spacing:.01em;
+  overflow:hidden;line-height:1;white-space:nowrap;padding:0 3px;transition:var(--rank-transition-fast);
+  background:var(--fill-none);color:#212529;border:1px solid var(--fill-none-line);
+  text-shadow:none;-webkit-text-stroke:0}
+/* 封榜后（pro-pending）的字色：照参照榜是白字（#ffb300 上只有 1.79:1）；想要 ≥9:1 把
+   --post-ink 改成 #231a02 即可（见报告「差异清单」的待拍板项）。 */
+body.m16 .cell.has-post,body.m16 .cell.pending-cell,body.m16 .cell.pro-judging{color:var(--post-ink, #231a02)}
+body.m16.postink-white .cell.has-post,body.m16.postink-white .cell.pending-cell,body.m16.postink-white .cell.pro-judging{color:#fff}
+body.m16 .cell.ac{background:var(--fill-ac);color:#fff;border:1px solid var(--fill-ac-line);
+  text-shadow:0 1px 2px rgba(0,0,0,.35)}
+body.m16 .cell.ac.has-wrong{background:var(--fill-ac)}
+body.m16 .cell.wrong{background:var(--fill-wa);color:#fff;border:1px solid var(--fill-wa-line);
+  text-shadow:0 1px 2px rgba(0,0,0,.35)}
+body.m16 .cell.pending{background:var(--fill-none);color:#212529;border:1px solid var(--fill-none-line)}
+body.m16 .cell.first-blood{background:#007bff;border:1px solid #0056b3;color:#fff;
+  box-shadow:0 0 0 2px #facc15,var(--rank-shadow-float)}
+body.m16 .cell.first-blood>.cell-label{color:#fff}
+body.m16 .cell .star{top:-10px;right:-6px;font-size:20px;color:#ffc107;
+  text-shadow:0 0 1px rgba(255,255,255,.95),0 1px 2px rgba(0,0,0,.28)}
+/* ?star=problem：一血星标跟题目色（我们原来的语义）。默认是参照榜的金 ★ #ffc107 —— 见报告里的差异清单 */
+body.m16.star-problem .cell .star{color:var(--problem-color);text-shadow:0 0 1px #fff,0 0 3px #000}
+body.m16 .cell-seg .star{top:0;right:1px;font-size:12px;color:#ffc107}
+body.m16.star-problem .cell-seg .star{color:var(--problem-color)}
+/* 参照榜的格内结构：提交次数小块（底色略深的琥珀方块）+ 时间（.time-brief 默认显示，.time-full 隐藏） */
+body.m16 .pro-submit-cnt{display:inline-flex;align-items:center;justify-content:center;min-width:1.1em;
+  height:calc(var(--rank-stats-height) - 9px);padding:0 4px;margin-right:5px;border-radius:3px;
+  background:rgba(0,0,0,.16);font-size:var(--rank-font-size-lg);font-weight:900;
+  font-variant-numeric:tabular-nums;line-height:1;text-shadow:none}
+body.m16 .time-brief{font-size:var(--rank-font-size-2xl);font-weight:900;font-variant-numeric:tabular-nums;
+  white-space:nowrap;line-height:1}
+body.m16 .time-full{display:none}
+body.m16 .cell.pending .pro-submit-cnt{background:rgba(0,0,0,.22)}
+body.m16 .cell.pending-cell{background:var(--fill-post);color:var(--post-ink,#231a02);border:1px solid var(--fill-post-line)}
+/* 封榜后（未揭示）= 参照榜的琥珀黄 #ffb300（?cells=ours 里仍是我们的 #d9a12e） */
+body.m16 .cell.has-post{background:var(--fill-post);color:var(--post-ink,#231a02);border:1px solid var(--fill-post-line);text-shadow:none}
+/* 滚榜中 / 判题中（照参照榜 .roll-judging-problem）：琥珀底 + 深琥珀描边 + 0.8s 脉冲 */
+body.m16 .cell.pro-judging{background:var(--fill-post);color:var(--post-ink,#231a02);outline:4px solid #ff6f00;outline-offset:-2px;
+  animation:rollJudgingProblemPulse .8s ease-in-out infinite;filter:brightness(1.1) saturate(1.2);z-index:10}
+body.m16.no-anim .cell.pro-judging{animation:none;background:#ffb300!important}
+/* ?palette=roll：切到线上滚榜页 stage 皮肤实测的那套（比目标图偏暗一点） */
+body.m16.palette-roll{--fill-ac:#126B46;--fill-ac-line:#0e5738;--fill-wa:#A42F3B;--fill-wa-line:#8c2530;
+  --fill-none:#ECEEF2;--fill-none-line:#dfe3ea;--fill-first:#1F559A;--fill-first-line:#194a86;
+  --fill-post:#F2C230;--fill-post-line:#e0ae1c}
+@keyframes rollJudgingProblemPulse{
+  0%,100%{background:#ffb300;outline-color:#ff6f00;filter:brightness(1.1) saturate(1.2)}
+  50%{background:#ffc107;outline-color:#ff8f00;filter:brightness(1.25) saturate(1.4)}}
+body.m16 .cell.locked{background-color:var(--fill-none);background-image:none;color:#212529;
+  border:1px dashed var(--rank-border-dark)}
+body.m16 .cell.cell-split{background:var(--knife);border:1px solid #ffa00088}
+body.m16 .cell.cell-split>[data-seg="ac"]{background:var(--fill-ac);color:#fff}
+body.m16 .cell.cell-split>[data-seg="wrong"]{background:var(--fill-wa);color:#fff}
+body.m16 .cell.cell-split>[data-seg="post"]{background:var(--fill-post);color:var(--post-ink,#231a02);box-shadow:inset 2px 0 0 var(--knife)}
+body.m16 .cell .ac-time{color:#eafaf0}
+
+/* ---------- ②-11 overlay（OBS 叠加）：零留白 + 透明底 + 收掉控制条/图例 ---------- */
+body.m16.overlay{padding:0;background:transparent}
+body.m16.overlay .rank-page-header,
+body.m16.overlay .rank-toolbar{display:none}
+body.m16.overlay .rank-panel{border:0;border-radius:0;box-shadow:none}
+body.m16.overlay .rank-footer .legend{display:none}
+body.m16.overlay .rank-footer{padding-bottom:0}
+
+
+/* ==========================================================================
+   M17（模板换成参照榜**滚榜页 /roll**）：两栏数据行 + 标志(校徽)列 + 页头标志 + 滚榜控制条卡片
+   --------------------------------------------------------------------------
+   实测（ref-roll-computed.json，1920）：行高 86、左栏 102、标志列 66、校徽圆 44、
+   题格 73x28 r4、表头行 62px 底 #f8f9fb 圆角 8 8 0 0、字号 13/600 色 #444c5c；
+   队伍块：校名 20px/650 #0f1520 + 队名 15px/500 #444c5c（我们没有校名/英文名 -> 只渲染队名+学号）。
+   ========================================================================== */
+/* M23：表头学参照榜实时榜单页 —— 前 5 列各有中英双行小标题（排名/题数/罚时/标志/队伍），
+   题目列 = 字母 + 「AC 队数/提交总数」。数据行也跟着改成**同一行的列序**：
+   名次 | 题数 | 罚时 | 标志 | 队伍 | 题目格。这样表头每一列都有对应的数据列，
+   列线中心偏差仍然靠"表头/数据行共用 --columns"保证 0px（回归项）。 */
+body.m16 .board-row{display:grid;grid-template-rows:1fr;align-items:center;padding-top:0;padding-bottom:0}
+body.m16 .board-row>.rank{grid-column:1;grid-row:1;justify-self:center;align-self:center}
+body.m16 .board-row>.solved{grid-column:2;grid-row:1;justify-self:center;align-self:center}
+body.m16 .board-row>.penalty{grid-column:3;grid-row:1;justify-self:center;align-self:center}
+body.m16 .board-row>.row-logo{grid-column:4;grid-row:1;justify-self:center;align-self:center;display:flex}
+body.m16 .board-row>.row-logo>img{width:var(--rank-roll-logo-size);height:var(--rank-roll-logo-size);
+  border-radius:50%;object-fit:cover;background:var(--rank-bg-secondary);display:block}
+body.m16 .board-row>.team{grid-column:5;grid-row:1;align-self:center;min-width:0}
+body.m16 .board-row>.cell{grid-row:1;align-self:center}
+body.m16 .board-row>.cell{grid-column:calc(var(--pi) + 6)}
+body.m16 .rank-header-row .problem-head{grid-column:calc(var(--pi) + 6)}
+body.m16 .rank-header-row .head-rank{grid-column:1}
+body.m16 .rank-header-row .head-solve{grid-column:2}
+body.m16 .rank-header-row .head-penalty{grid-column:3}
+body.m16 .rank-header-row .head-logo{grid-column:4}
+body.m16 .rank-header-row .head-team{grid-column:5}
+/* 表头行：浅底 + 上圆角；每列 = 中文一行 + 英文一小行（照参照榜） */
+body.m16 .rank-header-row{display:grid;grid-template-rows:auto;min-height:var(--rank-header-height);
+  align-items:stretch;background:var(--rank-header-bg);border-bottom:1px solid var(--rank-frame-line);
+  border-radius:8px 8px 0 0}
+/* 题数 / 罚时的表头小字（数据列现在是独立两列，不再是名次块下面的小胶囊） */
+body.m16 .board-row>.solved,body.m16 .board-row>.penalty{font-size:var(--rank-font-size-lg);font-weight:700}
+/* 队伍块：队名（数据里没有校名/英文名/学号，不编造） */
+body.m16 .board-row>.team .team-name{font-size:var(--rank-font-size-3xl);font-weight:650;color:var(--rank-text-strong);line-height:1.15}
+body.m16 .board-row>.team .student{font-size:var(--rank-font-size-md);font-weight:500;color:var(--rank-text-body)}
+/* 旧的两栏压缩档在新单行结构下已无意义，只保留兜底（防止残留 grid-row 指到不存在的行） */
+body.m16.roll-compact .board-row{grid-template-rows:1fr}
+body.m16.roll-compact .board-row>.rank,
+body.m16.roll-compact .board-row>.solved,
+body.m16.roll-compact .board-row>.penalty,
+body.m16.roll-compact .board-row>.row-logo,
+body.m16.roll-compact .board-row>.team,
+body.m16.roll-compact .board-row>.cell{grid-row:1}
+body.m16.roll-compact .board-row>.row-logo>img{width:28px;height:28px}
+/* 页头标志 = 我们的校徽（照参照榜的位置：标题左侧、圆形） */
+body.m16 .rank-page-header .brand{width:30px;height:30px;border-radius:50%;object-fit:cover;display:block;flex:0 0 auto}
+body.m16 .rank-page-header .brand-title{display:flex;align-items:center;gap:var(--rank-padding-sm);min-width:0}
+/* 工具条：照滚榜页的控件卡（白底圆角 + 药丸按钮 + 双语上下排）；进度条不是滚榜页的东西 -> 隐藏 */
+body.m16 .rank-toolbar{background:var(--rank-bg-primary);border:1px solid var(--rank-frame-line);
+  border-radius:var(--rank-radius-block);padding:var(--rank-padding-xs) var(--rank-padding-sm);gap:var(--rank-padding-sm)}
+body.m16 .rank-progress{display:none}
+body.m16 .rank-toolbar-title{flex-direction:column;align-items:flex-start;gap:0;font-weight:700}
+body.m16 .rank-toolbar-title small{font-weight:500}
+body.m16 .rank-time,body.m16 .rank-filter-chip{border:1px solid var(--rank-border-light);
+  border-radius:var(--rank-radius-inner);padding:2px var(--rank-padding-sm);background:var(--rank-bg-secondary)}
+
+
+/* 滚榜页模板：名次徽章下面的 题数/罚时 是**纯文字**（不是 rank 页那种浅底小胶囊）。
+   旧基线 `.penalty{color:#d6e2f6}` 是深色皮肤的亮字，在白底上只有 1.31:1 —— 必须按新结构覆盖。
+   注意：新结构里它们包在 .rank-meta 里，不再是 .board-row 的直接子元素，所以选择器要用后代。 */
+body.m16 .board-row .rank-meta .solved{color:var(--rank-text-strong);font-weight:800;font-size:var(--rank-font-size-lg);
+  background:none;border:0;padding:0;width:auto}
+body.m16 .board-row .rank-meta .penalty{color:var(--rank-text-body);font-weight:700;font-size:var(--rank-font-size-md);
+  background:none;border:0;padding:0;width:auto}
+body.m16.theme-dark .board-row .rank-meta .penalty{color:var(--rank-text-secondary)}
+/* 表头小字（8/10 统计）对比度：4.45 -> 用正文色 */
+body.m16 .problem-header-stats{color:var(--rank-text-body)}
+
+/* 深色主题下工具条卡片/表头小字与时间、计数的底色（否则浅字压白底 1.13:1） */
+body.m16.theme-dark .rank-toolbar{background:#16233a;border-color:#33415c}
+body.m16.theme-dark .rank-time,body.m16.theme-dark .rank-filter-chip{background:#1b2a44;border-color:#33415c}
+body.m16 .rank-header-row .problem-head>.problem-header-stats{color:var(--rank-text-body)}
+body.m16.theme-dark .rank-header-row .problem-head>.problem-header-stats{color:var(--rank-text-secondary)}
+
+/* 两段式格子的外层底色是刀口暗色，文字实际画在内层段上 —— 外层不要压 --post-ink（否则量出来是暗字压暗底） */
+body.m16 .cell.has-post:not(.cell-split),body.m16 .cell.pending-cell:not(.cell-split),
+body.m16 .cell.pro-judging:not(.cell-split){color:var(--post-ink,#231a02)}
+body.m16.postink-white .cell.has-post:not(.cell-split),body.m16.postink-white .cell.pending-cell:not(.cell-split),
+body.m16.postink-white .cell.pro-judging:not(.cell-split){color:#fff}
+
+
+/* ==========================================================================
+   对齐「用户给的滚榜页目标图」（docs/M17-证据/ref/用户给的滚榜页目标.png，1299x898 原尺寸像素基准）
+   实测：表头带 #f8f9fb、行白底 + 细灰分隔（无斑马纹）、名次金块 #d9a514、
+   题目格 绿#198754 / 一血蓝#007bff + 金星#ffc107 / 封榜琥珀#ffb300 / 未提交灰#adb5bd。
+   ========================================================================== */
+/* 1) 行：白底 + 细灰分隔，去掉斑马纹加重 */
+body.m16 .board-row{background:#ffffff;border-bottom:1px solid var(--row-line);border-radius:0}
+body.m16 .board-row:nth-child(even){background:#ffffff}
+body.m16 .board-row:hover{background:#f8f9fb}
+/* 行底色不再带奖牌渐变 */
+/* 偶数行同样不带奖牌渐变 */
+/* 2) 名次块：目标图的金色圆角块（大号名次数字） */
+body.m16 .board-row>.rank{background-color:var(--roll-gold);background-image:none;color:#2e2100;
+  border:0;border-radius:var(--rank-radius-inner);font-weight:900}
+body.m16 .board-row>.rank.top2{background-color:#c0c4cc;color:#2e2100}
+body.m16 .board-row>.rank.top3{background-color:#cd7f32;color:#2e2100}
+/* 3) 标志列：白底 + 细描边的圆形校徽（照目标图） */
+body.m16 .board-row>.row-logo>img{background:#ffffff;border:1px solid var(--row-line-soft)}
+/* 4) 队伍区：目标图是"小蓝图标 + 队名"，第二行小字（我们没有英文名 -> 学号） */
+body.m16 .board-row>.team .team-name{font-size:var(--rank-font-size-xl);font-weight:600;color:var(--rank-text-strong);
+  display:flex;align-items:center;gap:6px}
+body.m16 .board-row>.team .team-name::before{content:'';flex:0 0 auto;width:13px;height:13px;border-radius:50%;
+  border:2.5px solid #1c7ed6;box-shadow:inset 0 0 0 2.5px #ffffff,inset 0 0 0 5px #1c7ed6}
+body.m16 .board-row>.team .student{font-size:var(--rank-font-size-md);color:var(--rank-text-body)}
+/* 5) 表头带：浅色 + 细灰分隔；标题两行（中文/英文），题目字母黑色居中 */
+body.m16 .rank-header-row{background:var(--rank-header-bg);border-bottom:1px solid var(--row-line);
+  border-radius:0;color:#212529}
+body.m16 .rank-header-row .problem-head .problem-header-title{color:#212529;font-weight:600}
+/* M23：表头题目字母下的「AC 队数/提交总数」小字（参照榜 625/631 那行），11px muted 等宽。
+   上一版按滚榜页目标图隐藏过，这次按用户要求恢复。 */
+body.m16 .rank-header-row .problem-head>.problem-header-stats{display:block}
+body.m16 .rank-header-row>.head-rank,body.m16 .rank-header-row>.head-logo{color:#212529}
+body.m16 .rank-header-row>.head-rank small,body.m16 .rank-header-row>.head-logo small{color:var(--rank-text-secondary)}
+body.m16 .rank-panel{border-radius:0}
+
+
+/* 目标图的名次金块：约 66x34、大号数字居中；下面一行 题数/罚时 在左栏内居中 */
+body.m16 .board-row>.rank{width:66px;min-height:34px;display:flex;align-items:center;justify-content:center;
+  font-size:var(--rank-font-size-2xl);font-family:var(--rank-font-mono)}
+body.m16 .board-row>.rank-meta{justify-content:center;gap:var(--rank-padding-md)}
+body.m16 .board-row>.rank-meta .solved,body.m16 .board-row>.rank-meta .penalty{min-width:34px;text-align:center}
+body.m16 .board-row>.rank-meta .penalty{color:var(--rank-text-body)}
+
+/* 深色主题下浅色表头带的字色（否则 #212529 压深底 ≈1:1） */
+body.m16.theme-dark .rank-header-row{--header-ink:#eaf2ff}
+body.m16 .rank-header-row{color:var(--header-ink,#212529)}
+body.m16 .rank-header-row .problem-head .problem-header-title{color:var(--header-ink,#212529)}
+body.m16 .rank-header-row>.head-rank,body.m16 .rank-header-row>.head-logo{color:var(--header-ink,#212529)}
+body.m16.theme-dark .board-row{background:#101c2f;border-bottom-color:#243353}
+body.m16.theme-dark .board-row:nth-child(even){background:#101c2f}
+body.m16.theme-dark .board-row .rank-meta .solved{color:var(--rank-text-strong)}
+
+
+/* ==========================================================================
+   用户逐条整改（4 条）：名次只在奖项名单的金银铜上色 / WA 深红带时间 / 未提交灰格字母
+   ========================================================================== */
+/* ① 朴素名次 + 金银铜块（只有 .medal-1/2/3 才上色；没奖就是朴素数字） */
+body.m16 .board-row>.rank{background:none;background-color:transparent;border:0;color:var(--rank-text-strong);
+  font-weight:700}
+/* 名次块的金/银/铜**用该奖项的颜色变量**（行上由 medalFor 的 color = 配置 medal_colors[i] 或默认
+   #D4AF37/#A8B0B8/#CD7F32 给出）—— 这样"第 1 个奖=金、第 2=银、第 3=铜"和配置里的自定义奖牌色都成立。
+   实色不用渐变：取证要能直接从计算背景色读出奖牌色。 */
+body.m16 .board-row>.rank.medal-1,body.m16 .board-row>.rank.medal-2,body.m16 .board-row>.rank.medal-3{
+  background-color:var(--medal-color,#D4AF37);background-image:none;color:#1a1a1a;
+  border:0}
+/* ② 名次下面两个小方块（解题数 / 罚时），照样本 5 的朴素样子 */
+body.m16 .board-row>.rank-meta .solved,body.m16 .board-row>.rank-meta .penalty{
+  background:#f1f3f5;border:1px solid #e3e6ec;border-radius:3px;padding:1px 5px;min-width:26px;
+  font-size:var(--rank-font-size-md);font-weight:600;color:var(--rank-text-strong)}
+body.m16 .board-row>.rank-meta .penalty{color:var(--rank-text-body)}
+/* ③ WA 深红（照样本 #a42f3b，内层小块更深 #7a232c）+ 次数 + 时间 */
+body.m16 .cell.wrong{background:#a42f3b;border:1px solid #7a232c;color:#fff}
+body.m16 .cell.wrong .pro-submit-cnt{background:#7a232c}
+/* ④ 未提交：灰格居中显示题目字母 */
+body.m16 .cell .cell-letter{font-family:var(--rank-font-mono);font-size:var(--rank-font-size-xl);
+  font-weight:700;color:#212529;line-height:1}
+body.m16 .cell.pending .cell-letter{color:#212529}
+
+/* 深色主题：名次下面的两个小方块（浅底胶囊）与灰格字母 */
+body.m16.theme-dark .board-row>.rank-meta .solved,body.m16.theme-dark .board-row>.rank-meta .penalty{
+  background:#1b2a44;border-color:#33415c;color:var(--rank-text-strong)}
+body.m16.theme-dark .board-row>.rank-meta .penalty{color:var(--rank-text-secondary)}
+body.m16.theme-dark .board-row>.rank{color:var(--rank-text-strong)}
+body.m16.theme-dark .cell .cell-letter{color:#212529}
+
+/* 罚时小方块的字色用正文色（#6c757d 压浅底只有 4.22） */
+body.m16 .board-row>.rank-meta .penalty{color:var(--rank-text-body)}
+
+
+/* ==========================================================================
+   Bug B（主控复核）：整格"封榜后且没有 AC"= state:locked + post:true + wrong_before:0
+   -> 之前被 .cell.locked 的灰底盖住（两条同特异性、.locked 在后），现显式给琥珀。
+   两种形态都要对：① wrong_before=0 -> 整格琥珀 ② wrong_before>0 -> 两段式（红+琥珀，本来就对）。
+   ========================================================================== */
+body.m16 .cell.locked.has-post,body.m16 .cell.locked.pro-judging,
+body.m16 .cell.pending-cell.has-post,body.m16 .cell.pending-cell.pro-judging{
+  background:var(--fill-post);background-color:var(--fill-post);background-image:none;
+  border:1px solid var(--fill-post-line);color:var(--post-ink,#231a02)}
+body.m16.postink-white .cell.locked.has-post,body.m16.postink-white .cell.locked.pro-judging,
+body.m16.postink-white .cell.pending-cell.has-post,body.m16.postink-white .cell.pending-cell.pro-judging{color:#fff}
+
+
+/* ==========================================================================
+   用户点名：一血星标要**探出格子外**（照参照榜 .pro-first-blood-global::after 的做法：
+   top:-16px/right:-10px/font-size:20px/z-index:9999/pointer-events:none）。
+   要点：① 格子不再裁（overflow:visible），内层段自己裁圆角；
+        ② 星标绝对定位 -> 不影响布局（列线仍 0px）；
+        ③ 抬高层级，避免被相邻格子/下一行盖住；pointer-events:none 不挡交互。
+   ========================================================================== */
+body.m16 .cell{overflow:visible}
+body.m16 .cell-seg{overflow:hidden;border-radius:inherit}
+body.m16 .cell.first-blood{z-index:5}
+body.m16 .cell .star{position:absolute;top:-12px;right:-9px;font-size:19px;line-height:1;
+  z-index:9;pointer-events:none;color:#ffc107;
+  text-shadow:0 0 1px rgba(255,255,255,.95),0 1px 2px rgba(0,0,0,.3)}
+body.m16.star-problem .cell .star{color:var(--problem-color);text-shadow:0 0 1px #fff,0 0 3px #000}
+/* 滚榜页/深色主题下同样保持探出（表格容器不要裁） */
+body.m16 .rank-panel,body.m16 #rows,body.m16 .board-row{overflow:visible}
+
+
+/* 校徽占位/重试/失败态：都**保留元素与尺寸**（列线/行高不跳） */
+body.m16 .board-row .row-logo>img[data-state="retry"],body.m16 .board-row .row-logo>img[data-state="failed"]{
+  background:var(--rank-bg-secondary);border:1px solid var(--row-line-soft)}
+body.m16 .board-row .row-logo>img[data-state="failed"]{opacity:.35}
+body.m16 .board-row .row-logo>img{transition:opacity .2s ease}
+
+
+/* ==========================================================================
+   用户点名：**行级**金银铜装饰一律取消（行顶彩线 / 行底色渐变 / hover 变体 / 左边框色），
+   金银铜行与普通行完全一致 —— 只有**名次块**是金/银/铜。
+   ========================================================================== */
+body.m16 .board-row.medal,body.m16 .board-row.medal:nth-child(even){
+  background:#ffffff;background-image:none;border-left-color:transparent;box-shadow:none}
+body.m16 .board-row.medal:hover{background:#f8f9fb;background-image:none;box-shadow:var(--rank-shadow-float)}
+body.m16.theme-dark .board-row.medal,body.m16.theme-dark .board-row.medal:nth-child(even){background:#101c2f;background-image:none}
+body.m16 .board-row.medal>.rank.medal-1,body.m16 .board-row.medal>.rank.medal-2,
+body.m16 .board-row.medal>.rank.medal-3{background-image:none;background-color:var(--medal-color,#D4AF37)}
+
+
+/* ==========================================================================
+   M23（2026-10-17 用户要求）：
+     ① 删掉表头题目字母下的「每题一色」色条（见 ②-3 里 problem-head 的 box-shadow:none，
+        hover 也不再有阴影变体）—— 题目不再有专属色，--problem-color 只留在数据格里
+        （一血星标 ?star=problem 仍可用），表头不再使用它。
+     ② 表头学参照榜实时榜单页：每题字母下面 11px muted 等宽「AC 队数/提交总数」；
+        前几列中英双行小标题 排名/Team Rank、题数/Solved、罚时/Penalty、标志/Logo、队伍/Team；
+        表格上方一条标题栏（左侧校徽 + 榜单名），与表格同宽、在正常文档流里（overlay 下也不会盖住表格）。
+     ③ ?timebar=1 的滚榜时间轴（时间码 + 可拖滑块 + 播放键 + 回到实时）。默认不显示，
+        不加这个参数时页面与以前一致。
+   ========================================================================== */
+
+/* ② 单行列序里的 题数 / 罚时（表头第 2/3 列是它们的小标题；不再挂在名次块下面）
+   照参照榜：纯数字，不要浅底小胶囊（旧 rank 页那套 .solved/.penalty 胶囊在这里去掉）。 */
+body.m16 .board-row>.solved{color:var(--rank-text-strong);font-weight:800;
+  font-size:var(--rank-font-size-lg);font-variant-numeric:tabular-nums;line-height:1;
+  background:none;border:0;padding:0}
+body.m16 .board-row>.penalty{color:var(--rank-text-body);font-weight:700;
+  font-size:var(--rank-font-size-md);font-variant-numeric:tabular-nums;line-height:1;
+  background:none;border:0;padding:0}
+body.m16.theme-dark .board-row>.solved{color:var(--rank-text-strong);background:none;border:0}
+body.m16.theme-dark .board-row>.penalty{color:var(--rank-text-secondary);background:none;border:0}
+/* 新增表头列的字色（深色主题下浅色表头带用 --header-ink） */
+body.m16 .rank-header-row>.head-solve,
+body.m16 .rank-header-row>.head-penalty,
+body.m16 .rank-header-row>.head-team{color:var(--header-ink,#212529)}
+body.m16 .rank-header-row>.head-solve small,
+body.m16 .rank-header-row>.head-penalty small,
+body.m16 .rank-header-row>.head-team small{color:var(--rank-text-secondary)}
+body.m16.theme-dark .rank-header-row>.head-solve small,
+body.m16.theme-dark .rank-header-row>.head-penalty small,
+body.m16.theme-dark .rank-header-row>.head-team small{color:var(--rank-text-secondary)}
+/* 题目统计小字：浅色 muted、深色提亮一点（11px 在深底上别糊） */
+body.m16 .rank-header-row .problem-head>.problem-header-stats{color:var(--rank-text-muted)}
+body.m16.theme-dark .rank-header-row .problem-head>.problem-header-stats{color:var(--rank-text-secondary)}
+
+/* ① 标题栏（表格上方；左校徽 + 榜单名；和表格同宽、同左右内边距 -> 列线不被挤动） */
+body.m16 .rank-titlebar{display:flex;align-items:center;gap:10px;min-height:40px;
+  padding:4px var(--rank-padding-lg);background:var(--panel-bg);
+  border-bottom:1px solid var(--rank-line-faint)}
+body.m16 .rank-titlebar .titlebar-logo{width:26px;height:26px;border-radius:50%;object-fit:cover;
+  flex:0 0 auto;background:var(--rank-bg-secondary);border:1px solid var(--row-line-soft);display:block}
+body.m16 .rank-titlebar .titlebar-name{margin:0;font-size:var(--rank-font-size-lg);font-weight:700;
+  color:var(--rank-text-strong);font-family:var(--rank-font-display);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.01em}
+body.m16.theme-dark .rank-titlebar{background:#101c2f;border-bottom-color:#243353}
+body.m16.theme-dark .rank-titlebar .titlebar-name{color:#eaf2ff}
+body.m16.overlay .rank-titlebar{background:transparent;border-bottom:0;
+  padding-left:0;padding-right:0;min-height:36px}
+/* ?classic=1 旧皮肤：不显示新标题栏，保持旧视觉可逐像素对照 */
+body.classic .rank-titlebar{display:none}
+
+/* ③ 时间轴（?timebar=1）：时间码 + 可拖滑块 + 播放键 + 回到实时 */
+/* 默认不显示；只有 ?timebar=1（body.timebar-on）才出控件。放成不带 .m16 的规则，classic 下也不会漏出来 */
+.rank-timebar{display:none}
+body.timebar-on .rank-timebar{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;
+  padding:2px var(--rank-padding-sm);border:1px solid var(--rank-border-light);
+  border-radius:var(--rank-radius-inner);background:var(--rank-bg-secondary)}
+body.timebar-on .rank-timebar .timebar-clock{font-family:var(--rank-font-narrow);
+  font-size:var(--rank-font-size-xl);font-weight:700;color:var(--rank-text-strong);
+  font-variant-numeric:tabular-nums;flex:0 0 auto;min-width:86px;text-align:center}
+body.timebar-on .rank-timebar .timebar-slider{flex:1 1 auto;min-width:80px;height:18px;
+  accent-color:var(--rank-color-primary);cursor:pointer}
+body.timebar-on .rank-timebar button{flex:0 0 auto;font:inherit;font-size:var(--rank-font-size-sm);
+  font-weight:700;color:var(--rank-text-body);background:var(--rank-bg-primary);
+  border:1px solid var(--rank-border-light);border-radius:var(--rank-radius-inner);
+  padding:2px 10px;cursor:pointer;line-height:1.4}
+body.timebar-on .rank-timebar button:hover{background:var(--rank-bg-tertiary);color:var(--rank-text-strong)}
+body.timebar-on .rank-timebar button.timebar-play{min-width:34px;padding:2px 8px}
+body.timebar-on .rank-timebar button.timebar-play.is-playing{background:var(--rank-color-primary);
+  border-color:var(--rank-color-primary);color:#fff}
+body.timebar-on .rank-timebar button.timebar-live{color:var(--rank-color-primary)}
+body.timebar-on .rank-timebar button.timebar-live.is-live{color:var(--rank-text-muted);cursor:default}
+/* 时间轴开启时：原来的大号比赛时间收起来（时间码在时间轴里），但**保留封榜状态小字**
+   （封榜倒计时 / 封榜中 / 已结束），不丢信息。 */
+body.timebar-on .rank-time #elapsed{display:none}
+body.timebar-on .rank-progress{display:none}
+body.m16.theme-dark .rank-timebar{background:#1b2a44;border-color:#33415c}
+body.m16.theme-dark .rank-timebar .timebar-clock{color:#eaf2ff}
+body.m16.theme-dark .rank-timebar button{background:#16233a;border-color:#33415c;color:#cbd5e1}
+body.m16.theme-dark .rank-timebar button:hover{background:#22304a;color:#fff}
+body.m16.theme-dark .rank-timebar button.timebar-play.is-playing{background:var(--rank-color-primary);
+  border-color:var(--rank-color-primary);color:#fff}
+
+/* M23 回归修复（?classic=1）：旧皮肤没有给页头校徽尺寸（那条规则只挂在 body.m16 上），
+   校徽目录可用时 600px 原图会把页头撑爆。这里补一个 classic 专用尺寸，只改尺寸不改配色。 */
+body.classic .rank-page-header .brand{width:30px;height:30px;border-radius:50%;object-fit:cover;display:block;flex:0 0 auto}
+
+/* M23 小屏兜底（900×600 / 窄窗口）：题目列只有 ~35px，11px 的「AC/提交」放不下会互相挤；
+   窄于 1100px 时隐藏这行小字（1920/1366 正常显示）。名次徽章改用列宽上限，避免 48px 列里
+   塞 66px 金块、压到「题数」列。 */
+body.m16 .board-row>.rank{width:min(66px,100%)}
+@media (max-width:1100px){
+  body.m16 .rank-header-row .problem-head>.problem-header-stats{display:none}
+}
+
+/* M23 收尾：浏览器视图里左上角已有标题块（校徽 + 榜单名），m16 的标题栏只在 overlay
+   （页面标题块收起、给 OBS 用）时显示，避免同一个榜单名在一屏里出现两次。classic 早就隐藏。 */
+body.m16:not(.overlay):not(.classic) .rank-titlebar{display:none}
+
+/* M24：队伍列表头往右挪 27px，和名字文字对齐（名字前面有个 team-dot，表头原来只让 2px）。 */
+body.m16 .rank-header-row .head-team{padding-left:29px}
+
+/* M29 断线遮罩（用户 2026-10-17）：实时服务停了以后，OBS 里不要继续显示最后一帧旧榜单。 */
+body.is-offline #rows{opacity:.14;filter:grayscale(.7)}
+body.is-offline #viewport{pointer-events:none}
+.offline-mask{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;
+  pointer-events:none;background:rgba(255,255,255,.55)}
+body.theme-dark .offline-mask{background:rgba(8,14,24,.58)}
+.offline-mask[hidden]{display:none}
+.offline-card{display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px 30px;border-radius:16px;
+  background:#fff;border:1px solid #d7dee8;box-shadow:0 10px 34px #0003;color:#1c2430}
+.offline-card b{font-size:26px;letter-spacing:.02em}
+.offline-card span{font-size:15px;color:#5a6675}
+body.theme-dark .offline-card{background:#111c2e;border-color:#28374f;color:#e8f0fb}
+body.theme-dark .offline-card span{color:#9fb0c8}
+
+/* M29（用户 2026-10-17）：图例固定贴页面底部。以前它紧跟表格，队伍不满一页时
+   表格变矮，图例就飘到画面中间了；这里用 flex 的 margin-top:auto 把它顶到底。 */
+body.m16 #app > .rank-footer{margin-top:auto}
+/* M29b：图例要贴页面底部 —— .rank-footer 在 .board-panel 里面，所以先把面板撑满剩余高度，
+   再用 margin-top:auto 把图例顶到面板底部（= 页面底部）。队伍不满一页时不再飘到中间。 */
+body.m16 #app > .board-panel{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+body.m16 .rank-footer{margin-top:auto}
+
+/* M30 AC 滑入（用户 2026-10-17 直播中）：新通过的那一格从下方滑进来 + 轻微放大，0.5 秒完成。
+   只加在刚刚变绿的那一格上（board.js 的 changedAC），首帧不触发。 */
+@keyframes acIn{
+  0%{transform:translateY(10px) scale(.9);opacity:.25}
+  55%{transform:translateY(0) scale(1.045);opacity:1}
+  100%{transform:translateY(0) scale(1);opacity:1}
+}
+.cell.ac-in{animation:acIn .5s cubic-bezier(.2,.85,.3,1) both;will-change:transform}
+body.m16 .cell.ac-in .cell-seg{animation:acIn .5s cubic-bezier(.2,.85,.3,1) both}
+
+/* M39（用户 2026-10-18）：队伍名前的六边形标识。
+   蓝 = 正式队伍（中间一个深色圆点），黄 = 打星队伍（中间一个深色五角星）。
+   用 clip-path 做六边形，尺寸跟字号走，行高变化时自动缩放。 */
+.team-badge{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+  width:1.05em;height:1.05em;margin-right:.42em;font-size:.78em;line-height:1;
+  clip-path:polygon(50% 0%,93% 25%,93% 75%,50% 100%,7% 75%,7% 25%);vertical-align:-.12em}
+.team-badge.official{background:#8db3dc}
+.team-badge.official>span{display:block;width:.34em;height:.34em;border-radius:50%;background:#0b1421}
+.team-badge.star{background:#f2c024;color:#0b1421;font-weight:900;font-size:.8em;letter-spacing:0}
+body.theme-dark .team-badge.official{background:#9cc0e8}
+
+/* M41（用户 2026-10-18）：悬停信息卡（照参照榜 roll 页面）。
+   白底卡片 + 细边框 + 阴影；标题行「题目 X ｜ 状态 ｜ N 次提交 ｜ 用时 ｜ 罚时算式」，
+   下面是队伍/学号与逐条提交（#n 用时 判定 语言）。overlay（OBS）下 JS 直接不出卡。 */
+.tipcard{position:fixed;z-index:2000;left:0;top:0;display:none;min-width:220px;max-width:420px;
+  padding:10px 12px;border-radius:10px;background:#ffffff;color:#1b2430;
+  border:1px solid #cdd6e2;box-shadow:0 10px 26px #0006;font-size:13px;line-height:1.5;
+  pointer-events:none}
+.tipcard.show{display:block}
+.tip-head{display:flex;align-items:center;gap:10px;padding-bottom:6px;margin-bottom:6px;
+  border-bottom:1px solid #e3e9f1;font-size:13.5px}
+.tip-head b{font-size:14.5px}
+.tip-state{padding:1px 8px;border-radius:999px;font-size:12px;font-weight:700}
+.tip-state.ac{background:#e6f6ec;color:#0f7a3d}
+.tip-state.wa{background:#fdeaea;color:#b02a37}
+.tip-state.pending{background:#fff3d6;color:#8a5a00}
+.tip-state.post{background:#fff3d6;color:#8a5a00}
+.tip-state.none{background:#eef1f5;color:#5b6b7e}
+.tip-dim{color:#5b6b7e;font-size:12.5px}
+.tip-mono{font-variant-numeric:tabular-nums;color:#243244}
+.tip-row{display:flex;gap:10px;padding:1px 0}
+.tip-k{width:2.6em;color:#65758a;flex:0 0 auto}
+.tip-v{flex:1 1 auto;word-break:break-all}
+.tip-tag{padding:1px 8px;border-radius:999px;font-size:12px;font-weight:700}
+.tip-tag.official{background:#e8f0fb;color:#1f4e8c}
+.tip-tag.star{background:#fff4cf;color:#8a5a00}
+.tip-subs{margin-top:6px;padding-top:6px;border-top:1px dashed #dbe3ee}
+.tip-sub{display:flex;align-items:center;gap:8px;padding:1px 0}
+.tip-no{width:2.2em;color:#7a8798;font-variant-numeric:tabular-nums}
+.tip-t{width:4.6em;font-variant-numeric:tabular-nums;color:#243244}
+.tip-vd{font-weight:700}
+.tip-vd.ac{color:#0f7a3d}
+.tip-vd.wa{color:#b02a37}
+.tip-vd.ce,.tip-vd.re{color:#c26b00}
+.tip-vd.tle,.tip-vd.mle,.tip-vd.ole,.tip-vd.pe{color:#1f5fa8}
+.tip-vd.other{color:#5b6b7e}
+.tip-lang{color:#65758a;margin-left:auto}
+.tip-empty{color:#7a8798;font-style:italic}
+.tip-mini{font-size:14px}
+.tip-post{margin-top:6px;padding-top:6px;border-top:1px dashed #dbe3ee;color:#8a5a00;font-size:12.5px}
+.tip-vd.pend{color:#a06a00}
+.tip-sub-pend .tip-t{color:#8a7a5c}
