@@ -78,6 +78,49 @@ def el(indent: int, tag: str, value: Any) -> str:
 # XML 构建
 # --------------------------------------------------------------------------
 
+def _load_star_ids(extra: list[Any] | None = None) -> set[str]:
+    """读 config.json 里的 ``star_team_ids``（打星队伍）。
+
+    为什么在生成侧读、而不是让 GUI 传参：滚榜是冻结在 exe 里的 GUI 调
+    ``pta_to_resolver_xml.main``，加参数要重新打包；而 config.json 本来就是
+    运行期文件，就地读取既不用改 GUI，也能跟着用户勾选实时生效。
+    读不到就返回空集合（照旧不加星）。
+    """
+    import json as _json
+
+    here = Path(__file__).resolve()
+    candidates = [
+        Path.cwd() / "config.json",
+        here.with_name("config.json"),
+        here.parent / "config.json",
+        here.parent.parent / "config.json",
+    ]
+    # 命令行从别的目录调用时，contest.json 所在目录/它的上一级往往才是程序根
+    for folder in extra or []:
+        try:
+            candidates.append(Path(folder) / "config.json")
+        except TypeError:  # pragma: no cover - 防御性
+            continue
+    for cand in candidates:
+        try:
+            if not cand.is_file():
+                continue
+            data = _json.loads(cand.read_text(encoding="utf-8-sig"))
+        except Exception:  # noqa: BLE001 - 配置读坏了不该影响出榜
+            continue
+        raw = data.get("star_team_ids") if isinstance(data, dict) else None
+        if isinstance(raw, list):
+            return {str(x) for x in raw if x is not None}
+    return set()
+
+
+def _with_star(name: str, team_id: str, star_ids: set[str]) -> str:
+    """打星队伍在滚榜里显示成「队名 ★」，和题目格上的星标一个意思。"""
+    if star_ids and str(team_id) in star_ids and "★" not in name:
+        return f"{name} ★"
+    return name
+
+
 def compute_ranking(contest: dict[str, Any], penalty_minutes: int) -> list[dict[str, Any]]:
     """按 ICPC 规则算出榜单顺序：解题数降序，罚时升序。
 
@@ -381,12 +424,18 @@ def build_xml(
     medal_summary: bool = False,
     first_to_solve: bool = False,
     award_groups: list[dict[str, Any]] | None = None,
+    star_ids: set[str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """生成 XML 文本 + 一份统计/映射报告。
 
     ``award_groups`` 非空 = **打星模式**：按组（``team_ids``）发奖，``awards``
     （按名次的一等奖/二等奖…）**不参与**；两者同时给以 ``award_groups`` 为准。
     """
+    if star_ids is None:
+        star_ids = _load_star_ids()
+    else:
+        star_ids = {str(x) for x in star_ids}
+
     meta = contest.get("contest") or {}
     problems = contest.get("problems") or []
     teams = contest.get("teams") or []
@@ -487,7 +536,8 @@ def build_xml(
         add("  <team>\n")
         add(el(2, "id", team_id))
         add(el(2, "external-id", region_id))
-        add(el(2, "name", team.get("name") or f"Team_{team_id}"))
+        # 打星队伍在滚榜计分板/奖项页的队名后面加一个 ★（用户 2026-10-23 指定）
+        add(el(2, "name", _with_star(str(team.get("name") or f"Team_{team_id}"), team_id, star_ids)))
         add(el(2, "university", organization))
         add("  </team>\n")
 
@@ -706,7 +756,7 @@ def build_ndjson(
 
     ``org_plan``（可选）用来做「一个校徽一个 organization」的映射，形状：
         {"organizations": [{"id": "1", "name": "PTA"},
-                           {"id": "logo1", "name": "张三"}],
+                           {"id": "logo1", "name": "汪章正"}],
          "teams": {"<队伍ID>": "logo1"}}
     没在 ``teams`` 里的队伍一律用 ``region_id`` 那个机构（默认校徽挂它身上）。
     见 app/board_backend.py 的 match_team_logos / copy_org_logos。
@@ -1173,6 +1223,7 @@ def main(argv: list[str] | None = None) -> int:
 
     xml_text, report = build_xml(
         contest,
+        star_ids=_load_star_ids([contest_path.parent, contest_path.parent.parent]),
         organization=args.organization,
         region_id=args.region_id,
         medals=tuple(args.medals),  # type: ignore[arg-type]
