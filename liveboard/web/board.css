@@ -648,7 +648,7 @@ body.m16 .cell-seg .star{top:0;right:1px;font-size:12px;color:#ffc107}
 body.m16.star-problem .cell-seg .star{color:var(--problem-color)}
 /* 参照榜的格内结构：提交次数小块（底色略深的琥珀方块）+ 时间（.time-brief 默认显示，.time-full 隐藏） */
 body.m16 .pro-submit-cnt{display:inline-flex;align-items:center;justify-content:center;min-width:1.1em;
-  height:calc(var(--rank-stats-height) - 9px);padding:0 4px;margin-right:5px;border-radius:3px;
+  height:auto;line-height:1.12;max-height:100%;box-sizing:border-box;padding:0 4px;margin-right:5px;border-radius:3px;
   background:rgba(0,0,0,.16);font-size:var(--rank-font-size-lg);font-weight:900;
   font-variant-numeric:tabular-nums;line-height:1;text-shadow:none}
 body.m16 .time-brief{font-size:var(--rank-font-size-2xl);font-weight:900;font-variant-numeric:tabular-nums;
