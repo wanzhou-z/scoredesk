@@ -1170,9 +1170,14 @@ window.__OUTRANK__ = {json.dumps(conf, ensure_ascii=False).replace("</", "<\\/")
         document.documentElement.setAttribute("data-fit", "1.000");
         return;
       }}
-      // zoom 会把 width:100% 一起放大 —— 宽度先按 1/k 收，画出来才正好铺满窗口
+      // zoom 会把 width:100% 一起放大 —— 宽度先按 1/k 收，画出来才正好铺满窗口。
+      // 还要扣掉 body 的左右内边距和滚动条，否则右侧会溢出、把最后一列挤没。
+      var cs = window.getComputedStyle(document.body);
+      var padL = parseFloat(cs.paddingLeft) || 0;
+      var padR = parseFloat(cs.paddingRight) || 0;
+      var avail = document.documentElement.clientWidth - padL - padR - 2;
       app.style.zoom = String(k.toFixed(3));
-      app.style.width = Math.floor(window.innerWidth / k) + "px";
+      app.style.width = Math.max(320, Math.floor(avail / k)) + "px";
       document.documentElement.setAttribute("data-fit", k.toFixed(3));
     }}
     var pending = null;
