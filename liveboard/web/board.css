@@ -1054,8 +1054,12 @@ body.m16 .cell.ac-in .cell-seg{animation:acIn .5s cubic-bezier(.2,.85,.3,1) both
   transform:translateY(-.02em)}
 .team-badge.official{background:#8db3dc}
 .team-badge.official>span{display:block;width:.34em;height:.34em;border-radius:50%;background:#0b1421}
-.team-badge.star{background:#f2c024;color:#0b1421;font-weight:900;font-size:.82em;letter-spacing:0}
-.team-badge.star>span{font-size:.95em}
+/* 用户 2026-10-24：★ 用字形画总归会被基线带偏几个像素，
+   改成几何五角星（clip-path），和六边形同一个坐标系，绝对居中。 */
+.team-badge.star{background:#f2c024;color:transparent;font-size:.82em;letter-spacing:0}
+.team-badge.star>span{width:64%;height:64%;font-size:0;transform:none;background:#0b1421;
+  clip-path:polygon(50% 0%,61.8% 34.5%,98% 34.5%,68.5% 56.5%,79.4% 90.5%,50% 69%,20.6% 90.5%,
+                    31.5% 56.5%,2% 34.5%,38.2% 34.5%)}
 body.theme-dark .team-badge.official{background:#9cc0e8}
 
 /* M41（用户 2026-10-18）：悬停信息卡（照参照榜 roll 页面）。
