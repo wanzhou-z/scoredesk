@@ -1066,6 +1066,24 @@ window.__OUTRANK__ = {json.dumps(conf, ensure_ascii=False).replace("</", "<\\/")
         if (typeof input === "string") input = mapped;
         else input = new Request(mapped, input);
       }}
+      // 存档页固定「整榜全排」：rows 由存档里那份 config 决定，这里改成 0，
+      // 免得只显示前 N 行、剩下的藏在内部滚动里（用户 2026-10-24：不要漏信息）。
+      if (url && url.indexOf("/api/config") === 0) {{
+        return nativeFetch(input, init).then(function (res) {{
+          return res.json().then(function (doc) {{
+            if (doc && typeof doc === "object") {{
+              doc.rows = 999;
+              // board.js 真正读的是 config.view.rows（URL 没给时）
+              if (!doc.view || typeof doc.view !== "object") doc.view = {{}};
+              doc.view.rows = 999;
+            }}
+            return new Response(JSON.stringify(doc), {{
+              status: res.status,
+              headers: {{ "Content-Type": "application/json" }}
+            }});
+          }});
+        }});
+      }}
       return nativeFetch(input, init);
     }};
   }}
@@ -1133,69 +1151,55 @@ window.__OUTRANK__ = {json.dumps(conf, ensure_ascii=False).replace("</", "<\\/")
   }};
   window.EventSource = ArchiveEventSource;
   // ---------------------------------------------------------------------
-  // 自动适配屏幕（用户 2026-10-24：外榜在 2560x1440 上太小、留一大片空白）。
-  //   量 #app 的实际尺寸，用 CSS zoom 等比铺满窗口；窗口变化 / 数据更新都会重算。
-  //   网址加 ?fit=0 关掉（回到 1:1）。
+  // 外榜页面适配（用户 2026-10-24：不漏信息、不留大片空白）
+  //   1) body 去掉内边距 —— board.js 是按 body padding 算宽高的，padding=0 时
+  //      榜单正好铺满整个窗口（否则四周各留 16px，底部看着就是一条空白）；
+  //   2) 把 /api/config 里的 rows 抬到 999：board.js 的规则是
+  //      「队伍数 < 一屏行数」时把行高下限放宽到 44px，于是队伍少的时候
+  //      整张榜能一屏放下、不出现内部滚动（不漏信息）；
+  //   3) 若还有零头空白（行高被 86px 封顶），把剩余高度平均加回行高；
+  //   4) 极端小屏放不下时才让页面整体滚动，绝不把字缩到看不清。
+  //   参数：?fit=0 关掉这套适配。
   // ---------------------------------------------------------------------
   (function () {{
-    var fitOn = true;
-    try {{
-      var q = new URLSearchParams(location.search);
-      if (q.get("fit") === "0") fitOn = false;
-    }} catch (e) {{}}
-    if (!fitOn) return;
+    var q = new URLSearchParams(location.search);
+    if (q.get("fit") === "0") return;
 
-    // 适配思路：先按 1:1 量出榜单本身有多高，再等比缩放到「正好塞满窗口高度」
-    // （只放大不缩小；网址 ?fit=1.3 可手动指定，?fit=0 关掉）。
-    var MIN_K = 1.0, MAX_K = 2.0;
-    var forced = null;
-    try {{
-      var qf = new URLSearchParams(location.search).get("fit");
-      if (qf && qf !== "0" && qf !== "1") {{
-        var num = parseFloat(qf);
-        if (isFinite(num) && num > 0.3 && num < 4) forced = num;
-      }}
-    }} catch (e) {{}}
-    function apply() {{
+    var css = document.createElement("style");
+    css.textContent = "body{{padding:0 !important;margin:0 !important}}#app{{transform-origin:top left}}";
+    document.head.appendChild(css);
+
+    function fillRows() {{
       var app = document.getElementById("app");
-      if (!app) return;
-      app.style.zoom = "1";
-      app.style.width = "";
-      var natural = app.scrollHeight;
-      if (!natural) return;
-      var k = forced !== null ? forced : (window.innerHeight - 4) / natural;
-      if (!isFinite(k) || k <= 0) return;
-      k = Math.max(MIN_K, Math.min(MAX_K, k));
-      if (k <= 1.0001) {{
-        document.documentElement.setAttribute("data-fit", "1.000");
-        return;
-      }}
-      // zoom 会把 width:100% 一起放大 —— 宽度先按 1/k 收，画出来才正好铺满窗口。
-      // 还要扣掉 body 的左右内边距和滚动条，否则右侧会溢出、把最后一列挤没。
-      var cs = window.getComputedStyle(document.body);
-      var padL = parseFloat(cs.paddingLeft) || 0;
-      var padR = parseFloat(cs.paddingRight) || 0;
-      var avail = document.documentElement.clientWidth - padL - padR - 2;
-      app.style.zoom = String(k.toFixed(3));
-      app.style.width = Math.max(320, Math.floor(avail / k)) + "px";
-      document.documentElement.setAttribute("data-fit", k.toFixed(3));
+      var rowsEl = document.getElementById("rows");
+      if (!app || !rowsEl) return;
+      var n = rowsEl.children.length;
+      if (!n) return;
+      var slack = app.clientHeight - app.scrollHeight;
+      if (slack <= 6) return;
+      var cur = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-height")) || 0;
+      if (!cur) return;
+      var per = Math.min(60, slack / n);
+      if (per < 1) return;
+      document.documentElement.style.setProperty("--row-height", (cur + per).toFixed(1) + "px");
     }}
+
     var pending = null;
     function schedule() {{
       if (pending) return;
-      pending = setTimeout(function () {{ pending = null; apply(); }}, 60);
+      pending = setTimeout(function () {{ pending = null; }} , 90);
     }}
     window.addEventListener("resize", schedule);
     document.addEventListener("DOMContentLoaded", function () {{
       schedule();
+      setTimeout(schedule, 400);
+      setTimeout(schedule, 1200);
       var app = document.getElementById("app");
       if (app && window.MutationObserver) {{
         new MutationObserver(schedule).observe(app, {{childList: true, subtree: true}});
       }}
-      setTimeout(schedule, 400);
-      setTimeout(schedule, 1200);
     }});
-    window.__outrankAutofit = apply;
+    window.__outrankAutofit = fillRows;
   }})();
 }})();
 </script>
