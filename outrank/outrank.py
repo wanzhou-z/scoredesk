@@ -1132,6 +1132,66 @@ window.__OUTRANK__ = {json.dumps(conf, ensure_ascii=False).replace("</", "<\\/")
     clearTimeout(this._timer);
   }};
   window.EventSource = ArchiveEventSource;
+  // ---------------------------------------------------------------------
+  // 自动适配屏幕（用户 2026-10-24：外榜在 2560x1440 上太小、留一大片空白）。
+  //   量 #app 的实际尺寸，用 CSS zoom 等比铺满窗口；窗口变化 / 数据更新都会重算。
+  //   网址加 ?fit=0 关掉（回到 1:1）。
+  // ---------------------------------------------------------------------
+  (function () {{
+    var fitOn = true;
+    try {{
+      var q = new URLSearchParams(location.search);
+      if (q.get("fit") === "0") fitOn = false;
+    }} catch (e) {{}}
+    if (!fitOn) return;
+
+    // 适配思路：先按 1:1 量出榜单本身有多高，再等比缩放到「正好塞满窗口高度」
+    // （只放大不缩小；网址 ?fit=1.3 可手动指定，?fit=0 关掉）。
+    var MIN_K = 1.0, MAX_K = 2.0;
+    var forced = null;
+    try {{
+      var qf = new URLSearchParams(location.search).get("fit");
+      if (qf && qf !== "0" && qf !== "1") {{
+        var num = parseFloat(qf);
+        if (isFinite(num) && num > 0.3 && num < 4) forced = num;
+      }}
+    }} catch (e) {{}}
+    function apply() {{
+      var app = document.getElementById("app");
+      if (!app) return;
+      app.style.zoom = "1";
+      app.style.width = "";
+      var natural = app.scrollHeight;
+      if (!natural) return;
+      var k = forced !== null ? forced : (window.innerHeight - 4) / natural;
+      if (!isFinite(k) || k <= 0) return;
+      k = Math.max(MIN_K, Math.min(MAX_K, k));
+      if (k <= 1.0001) {{
+        document.documentElement.setAttribute("data-fit", "1.000");
+        return;
+      }}
+      // zoom 会把 width:100% 一起放大 —— 宽度先按 1/k 收，画出来才正好铺满窗口
+      app.style.zoom = String(k.toFixed(3));
+      app.style.width = Math.floor(window.innerWidth / k) + "px";
+      document.documentElement.setAttribute("data-fit", k.toFixed(3));
+    }}
+    var pending = null;
+    function schedule() {{
+      if (pending) return;
+      pending = setTimeout(function () {{ pending = null; apply(); }}, 60);
+    }}
+    window.addEventListener("resize", schedule);
+    document.addEventListener("DOMContentLoaded", function () {{
+      schedule();
+      var app = document.getElementById("app");
+      if (app && window.MutationObserver) {{
+        new MutationObserver(schedule).observe(app, {{childList: true, subtree: true}});
+      }}
+      setTimeout(schedule, 400);
+      setTimeout(schedule, 1200);
+    }});
+    window.__outrankAutofit = apply;
+  }})();
 }})();
 </script>
 </head>"""
