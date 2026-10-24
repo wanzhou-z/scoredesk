@@ -83,12 +83,12 @@ function clock(s) {
   model.clockBase = elapsed; model.receivedAt = performance.now();
   // M26 标题取值链（用户口径）：?title= 参数 → 配置里的 title（GUI 填的）→ PTA 比赛名 → 默认「实时榜单」。
   const cfgTitle = String(model.config.title || '').trim();
-  const title = qs.get('title') || cfgTitle || c.title || 'ScoreDeck · 实时榜单';
+  const title = qs.get('title') || cfgTitle || c.title || '实时榜单';
   document.getElementById('title').textContent = title; document.title = title;
   // M25：副标题固定，不再因为「回放演练 / 拖时间轴」变成「回放演练 ×N」（用户 2026-10-17：不要这个。时间轴本身已经标出回放时刻）。
 document.getElementById('subtitle').textContent = '实时排名（数据源同步）';
   // M23 表格上方的标题栏（照参照榜左上角）：与页面大标题同一条取值链。
-  const barName = qs.get('title') || cfgTitle || c.title || 'ScoreDeck · 实时榜单';
+  const barName = qs.get('title') || cfgTitle || c.title || '实时榜单';
   const barEl = document.getElementById('contestTitle');
   if (barEl && barEl.textContent !== barName) barEl.textContent = barName;
   model.duration = Number(c.duration_seconds || 10800) || 10800;
@@ -235,7 +235,12 @@ function refSegInner(seg, c) {
 function cellInner(c, s, isFirst, isPostFrozen) {
   const ref = model.options.cells === 'ref';
   const post = isPost(c, s);
-  if (isPostFrozen && c.pending && !post) return { cls: 'cell pending-cell' + (ref ? ' pro-judging' : ''), html: '<span class="cell-label">·</span>', post: false, pending: true };
+  if (isPostFrozen && c.pending && !post) {
+    // 用户 2026-10-24：判题中不要只剩一个「·」，把题目字母显示出来（外面仍有琥珀底 + 脉冲）
+    return { cls: 'cell pending-cell' + (ref ? ' pro-judging' : ''),
+             html: '<span class="cell-letter">' + esc(c.label || c.problem_id || '') + '</span>',
+             post: false, pending: true };
+  }
   if (isPostFrozen) {
     // 用户更正：**封榜后一律整格琥珀，不再两段式**（红+黄作废）。
     //   ref（默认）每题格只有一段底色；?cells=ours 仍保留旧的分段语义。
@@ -260,18 +265,27 @@ function cellInner(c, s, isFirst, isPostFrozen) {
       // 封榜视角下"这题压根没提交" -> 灰格居中题目字母
       return { cls: 'cell pending', html: '<span class="cell-letter">' + esc(letter) + '</span>', post: false, pending: false };
     }
-    const yellow = post ? postSeg(c) : null;
-    if (!judged && !yellow) {
-      return { cls: 'cell pending', html: '<span class="cell-label">·</span>', post: false, pending: false };
+    // 用户 2026-10-24（直播中发现的错误构成）：**不再拼接「红段 + 黄段」**，
+    // 只要封榜后有提交，就是整格琥珀 + [总次数][最后提交分钟']，和 ?cells=ref 一致；
+    // 连次数都算不出来（比如只交了编译错误）时退回灰格字母，不出现空块/孤零零的点。
+    if (post) {
+      const cnt = totalSubmits(c);
+      const mins = Number.isFinite(Number(c.post_last_minutes)) && c.post_last_minutes != null
+        ? Math.floor(Number(c.post_last_minutes)) : null;
+      const letter = c.label || c.problem_id || '';
+      if (cnt <= 0 && mins == null) {
+        return { cls: 'cell has-post', html: '<span class="cell-letter">' + esc(letter) + '</span>', post: true, pending: false };
+      }
+      const seg = { state: 'post', wrong: preWrong(c) + postWrong(c), time: mins != null ? mins * 60 : null, label: '+' };
+      return { cls: 'cell has-post' + (c.pending ? ' pro-judging' : ''), html: refSegInner(seg, c), post: true, pending: false };
     }
-    const segs = [];
-    if (judged) segs.push(segHtml(judged, isFirst));
-    if (yellow) segs.push(segHtml(yellow, false));
-    const only = segs.length === 1 ? (judged ? judged.state : 'locked') : '';
-    const cls = 'cell' + (only ? ' ' + only : '') + (segs.length > 1 ? ' cell-split' : '') +
-                (judged && judged.state === 'ac' && judged.wrong ? ' has-wrong' : '') +
-                (judged && judged.state === 'ac' && isFirst ? ' first-blood' : '') + (yellow ? ' has-post' : '');
-    return { cls, html: segs.join(''), post: !!yellow, pending: false };
+    if (judged) {
+      const first = judged.state === 'ac' && isFirst;
+      return { cls: 'cell ' + judged.state + (first ? ' first-blood' : ''),
+               html: refSegInner(judged, c) + (first ? '<span class="star" title="本题一血">★</span>' : ''),
+               post: false, pending: false };
+    }
+    return { cls: 'cell pending', html: '<span class="cell-letter">' + esc(c.label || c.problem_id || '') + '</span>', post: false, pending: false };
   }
   // 实时视角（含 ?thaw=1 / freeze=operator）
   if (c.state === 'pending' && c.pending) return { cls: 'cell pending-cell blink' + (ref ? ' pro-judging' : ''), html: '<span class="cell-label">·</span>', post: false, pending: true };
