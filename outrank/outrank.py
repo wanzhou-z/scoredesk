@@ -38,32 +38,8 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 sys.dont_write_bytecode = True
 
 BASE = Path(__file__).resolve().parent
-
-
-def _module_dirs() -> list[Path]:
-    """外榜与 ``liveboard`` / ``core`` 是同级目录，直接跑本文件时补上 import 路径。"""
-    repo = BASE.parent
-    return [repo / "liveboard", repo / "core",
-            repo / "_internal" / "liveboard", repo / "_internal" / "core"]
-
-
-for _dir in _module_dirs():
-    if _dir.is_dir() and str(_dir) not in sys.path:
-        sys.path.insert(0, str(_dir))
-
-
-def _default_web_root() -> Path:
-    env = os.environ.get("OUTRANK_WEB_ROOT")
-    if env:
-        return Path(env)
-    for cand in (BASE.parent / "liveboard" / "web", BASE / "web"):
-        if (cand / "board.html").is_file():
-            return cand
-    return BASE.parent / "liveboard" / "web"
-
-
 DEFAULT_ARCHIVES = BASE / "archives"
-DEFAULT_WEB_ROOT = _default_web_root()
+DEFAULT_WEB_ROOT = BASE / "web"
 
 # live-board 的排名/题目统计函数；这里不 import presentation，避免它的导入期自愈去碰实时文件。
 from board_core import (build_board, contest_over, frozen_cell_ids, missing_from_roster,
@@ -694,11 +670,11 @@ def render_list_page(store: ArchiveStore) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ScoreDeck 外榜 · 外榜列表</title>
+<title>wanzhou 外榜 · 外榜列表</title>
 <script>
 (function () {
   try {
-    if (localStorage.getItem('scoredesk-outrank-theme') === 'light') {
+    if (localStorage.getItem('wanzhou-outrank-theme') === 'light') {
       document.documentElement.setAttribute('data-theme', 'light');
     }
   } catch (e) {}
@@ -928,7 +904,7 @@ html[data-theme="light"] .theme-btn .moon { display: block; }
           <path d="M13.5 13.5h6v6h-6z" opacity=".55"></path>
         </svg>
       </span>
-      <span class="brand-name">ScoreDeck 外榜</span>
+      <span class="brand-name">wanzhou 外榜</span>
       <span class="brand-sub">OUTRANK</span>
     </div>
     <div class="top-actions">
@@ -1010,7 +986,7 @@ html[data-theme="light"] .theme-btn .moon { display: block; }
     var next = currentTheme() === "light" ? "dark" : "light";
     if (next === "light") root.setAttribute("data-theme", "light");
     else root.setAttribute("data-theme", "dark");
-    try { localStorage.setItem("scoredesk-outrank-theme", next); } catch (e) {}
+    try { localStorage.setItem("wanzhou-outrank-theme", next); } catch (e) {}
     syncThemeButton();
   });
   syncThemeButton();
@@ -1093,27 +1069,55 @@ window.__OUTRANK__ = {json.dumps(conf, ensure_ascii=False).replace("</", "<\\/")
       return nativeFetch(input, init);
     }};
   }}
-  // 存档页不需要 SSE：构造时拉一次 board+presentation，然后派发一个 update 事件。
+  // 存档页也做成"活的"：每隔几秒拉一次 board+presentation，数据有变化才派发
+  // update —— board.js 收到 update 后会按实时榜那套动效重新排版（名次滑动、格子变色）。
+  // 轮询间隔：?poll=8（秒，2~60，默认 5）；?poll=0 = 关掉自动更新，只拉一次。
+  var POLL_SEC = 5;
+  try {{
+    var qp = new URLSearchParams(location.search);
+    var rawPoll = parseFloat(qp.get("poll"));
+    if (isFinite(rawPoll)) POLL_SEC = Math.max(0, Math.min(60, rawPoll));
+  }} catch (e) {{}}
+  var POLL_MS = POLL_SEC * 1000;
   function ArchiveEventSource(url) {{
     var self = this;
     this.url = url; this.readyState = 0; this.listeners = {{}};
-    this._timer = setTimeout(function () {{
-      self.readyState = 1;
-      try {{ if (self.onopen) self.onopen({{type: "open"}}); }} catch (e) {{}}
+    var last = null, opened = false, closed = false;
+    function fire(type, ev) {{
+      (self.listeners[type] || []).forEach(function (fn) {{
+        try {{ fn.call(self, ev); }} catch (e) {{}}
+      }});
+    }}
+    function schedule(delay) {{
+      if (closed) return;
+      clearTimeout(self._timer);
+      self._timer = setTimeout(tick, delay);
+    }}
+    function tick() {{
+      if (closed) return;
       Promise.all([
         nativeFetch(api + "/api/board").then(function (r) {{ return r.json(); }}),
         nativeFetch(api + "/api/presentation").then(function (r) {{ return r.json(); }})
       ]).then(function (pair) {{
+        if (!opened) {{
+          opened = true; self.readyState = 1;
+          try {{ if (self.onopen) self.onopen({{type: "open"}}); }} catch (e) {{}}
+        }}
         var payload = Object.assign({{}}, pair[0], {{last_poll: pair[0].updated, presentation: pair[1]}});
-        var ev = {{type: "update", data: JSON.stringify(payload)}};
-        (self.listeners.update || []).forEach(function (fn) {{
-          try {{ fn.call(self, ev); }} catch (e) {{}}
-        }});
+        var text = JSON.stringify(payload);
+        if (text !== last) {{
+          last = text;
+          fire("update", {{type: "update", data: text}});
+        }}
+        if (POLL_MS > 0) {{ schedule(POLL_MS); }}
+        else {{ closed = true; self.readyState = 2; }}
       }}).catch(function () {{
-        self.readyState = 2;
-        try {{ if (self.onerror) self.onerror({{}}); }} catch (e) {{}}
+        if (!opened) {{ try {{ if (self.onerror) self.onerror({{}}); }} catch (e) {{}} }}
+        if (POLL_MS > 0) {{ schedule(Math.max(3000, POLL_MS * 2)); }}
+        else {{ closed = true; self.readyState = 2; }}
       }});
-    }}, 30);
+    }}
+    schedule(30);
   }}
   ArchiveEventSource.prototype.addEventListener = function (type, fn) {{
     (this.listeners[type] || (this.listeners[type] = [])).push(fn);
@@ -1124,7 +1128,8 @@ window.__OUTRANK__ = {json.dumps(conf, ensure_ascii=False).replace("</", "<\\/")
     if (i >= 0) arr.splice(i, 1);
   }};
   ArchiveEventSource.prototype.close = function () {{
-    clearTimeout(this._timer); this.readyState = 2;
+    this.readyState = 2;
+    clearTimeout(this._timer);
   }};
   window.EventSource = ArchiveEventSource;
 }})();
