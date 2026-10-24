@@ -789,8 +789,7 @@ body.m16 .board-row>.row-logo>img{background:#ffffff;border:1px solid var(--row-
 /* 4) 队伍区：目标图是"小蓝图标 + 队名"，第二行小字（我们没有英文名 -> 学号） */
 body.m16 .board-row>.team .team-name{font-size:var(--rank-font-size-xl);font-weight:600;color:var(--rank-text-strong);
   display:flex;align-items:center;gap:6px}
-body.m16 .board-row>.team .team-name::before{content:'';flex:0 0 auto;width:13px;height:13px;border-radius:50%;
-  border:2.5px solid #1c7ed6;box-shadow:inset 0 0 0 2.5px #ffffff,inset 0 0 0 5px #1c7ed6}
+/* 用户 2026-10-24：队名前的蓝色圆环去掉，只留右边那个六边形标记 */
 body.m16 .board-row>.team .student{font-size:var(--rank-font-size-md);color:var(--rank-text-body)}
 /* 5) 表头带：浅色 + 细灰分隔；标题两行（中文/英文），题目字母黑色居中 */
 body.m16 .rank-header-row{background:var(--rank-header-bg);border-bottom:1px solid var(--row-line);
@@ -1045,12 +1044,18 @@ body.m16 .cell.ac-in .cell-seg{animation:acIn .5s cubic-bezier(.2,.85,.3,1) both
 /* M39（用户 2026-10-18）：队伍名前的六边形标识。
    蓝 = 正式队伍（中间一个深色圆点），黄 = 打星队伍（中间一个深色五角星）。
    用 clip-path 做六边形，尺寸跟字号走，行高变化时自动缩放。 */
+/* 用户 2026-10-24：这个六边形放大到 1.55em，并把里面的 ★ 真正居中
+   （原来 ★ 是行内文字，受基线影响偏下；这里改成 flex 居中 + line-height:1 + 微调位移） */
 .team-badge{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
-  width:1.05em;height:1.05em;margin-right:.42em;font-size:.78em;line-height:1;
-  clip-path:polygon(50% 0%,93% 25%,93% 75%,50% 100%,7% 75%,7% 25%);vertical-align:-.12em}
+  width:1.55em;height:1.55em;margin-right:.5em;font-size:.82em;line-height:1;
+  clip-path:polygon(50% 0%,93% 25%,93% 75%,50% 100%,7% 75%,7% 25%);vertical-align:-.34em;
+  overflow:hidden}
+.team-badge>span{display:flex;align-items:center;justify-content:center;line-height:1;
+  transform:translateY(-.02em)}
 .team-badge.official{background:#8db3dc}
 .team-badge.official>span{display:block;width:.34em;height:.34em;border-radius:50%;background:#0b1421}
-.team-badge.star{background:#f2c024;color:#0b1421;font-weight:900;font-size:.8em;letter-spacing:0}
+.team-badge.star{background:#f2c024;color:#0b1421;font-weight:900;font-size:.82em;letter-spacing:0}
+.team-badge.star>span{font-size:.95em}
 body.theme-dark .team-badge.official{background:#9cc0e8}
 
 /* M41（用户 2026-10-18）：悬停信息卡（照参照榜 roll 页面）。
