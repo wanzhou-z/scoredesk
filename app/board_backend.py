@@ -291,7 +291,7 @@ def load_vjudge_backend(root: Path) -> Any:
     if _BACKEND_VJ is not None:
         return _BACKEND_VJ
     root = Path(root)
-    for entry in (str(root), str(root / "tools")):
+    for entry in (str(root), str(root / "tools"), str(root / "core")):
         if entry not in sys.path:
             sys.path.insert(0, entry)
     import vjudge_fetch                     # noqa: E402

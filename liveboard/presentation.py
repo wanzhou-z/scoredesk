@@ -16,7 +16,10 @@ CONTEST_PATH = Path(os.environ.get("LIVE_BOARD_CONTEST") or (BASE / "contest.jso
 # 打包模式则是 <exe>\_internal\{app,core?}。这里按"谁存在用谁"排一遍，
 # 不再写死 pta-resolver 这个私有目录名（用户反馈：scripts\*.bat 一跑就 ModuleNotFoundError）。
 _CANDIDATE_DIRS = [
-    BASE.parent,                      # 打包：_internal    BASE.parent / "app",              # 打包 / 源码：app    BASE.parent / "core",             # 源码：core    BASE.parent / "pta-resolver",     # 旧布局（保留兼容）
+    BASE.parent,                      # 打包：_internal（app/core 与 liveboard 同级）
+    BASE.parent / "app",              # 打包 / 源码：app 目录
+    BASE.parent / "core",             # 源码：core 目录（pta_common / pta_fetch / vjudge_fetch）
+    BASE.parent / "pta-resolver",     # 旧布局（保留兼容）
     BASE.parent / "pta-resolver" / "app",
 ]
 for _d in _CANDIDATE_DIRS:
