@@ -4,6 +4,7 @@ rem Requires Python 3.9+ on PATH.
 setlocal
 chcp 65001 >nul
 cd /d "%~dp0..\liveboard"
+set "PYTHONPATH=%CD%;%CD%\..\app;%CD%\..\core"
 
 rem First run: seed config.json from the sanitized example.
 if not exist config.json (

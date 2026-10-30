@@ -12,9 +12,20 @@ sys.dont_write_bytecode = True
 BASE = Path(__file__).resolve().parent
 # 默认读比赛数据本体；隔离验收可用环境变量指向冻结副本，避免与正在跑的 poller 抢文件。
 CONTEST_PATH = Path(os.environ.get("LIVE_BOARD_CONTEST") or (BASE / "contest.json"))
-RESOLVER = BASE.parent / "pta-resolver"
-sys.path.insert(0, str(RESOLVER))
-sys.path.insert(0, str(RESOLVER / "app"))
+# 源码模式（公开仓库）布局是 <repo>\{app,core,liveboard,outrank}；
+# 打包模式则是 <exe>\_internal\{app,core?}。这里按"谁存在用谁"排一遍，
+# 不再写死 pta-resolver 这个私有目录名（用户反馈：scripts\*.bat 一跑就 ModuleNotFoundError）。
+_CANDIDATE_DIRS = [
+    BASE.parent,                      # 打包：_internal    BASE.parent / "app",              # 打包 / 源码：app    BASE.parent / "core",             # 源码：core    BASE.parent / "pta-resolver",     # 旧布局（保留兼容）
+    BASE.parent / "pta-resolver" / "app",
+]
+for _d in _CANDIDATE_DIRS:
+    try:
+        if _d.is_dir() and str(_d) not in sys.path:
+            sys.path.insert(0, str(_d))
+    except OSError:
+        pass
+RESOLVER = BASE.parent  # 仅作日志/兼容用途
 from board_backend import make_circular_png, match_team_logos
 from pta_to_resolver_xml import compute_first_to_solve
 from board_core import (build_board, data_error, make_state, repair_data_files, frozen_cell_ids,

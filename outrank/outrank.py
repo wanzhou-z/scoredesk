@@ -42,6 +42,16 @@ DEFAULT_ARCHIVES = BASE / "archives"
 DEFAULT_WEB_ROOT = BASE / "web"
 
 # live-board 的排名/题目统计函数；这里不 import presentation，避免它的导入期自愈去碰实时文件。
+# 源码模式下 board_core 在 liveboard\、配套脚本在 core\；打包模式下在 _internal\。
+_HERE = Path(__file__).resolve().parent
+for _d in (_HERE, _HERE.parent / "liveboard", _HERE.parent / "core",
+           _HERE.parent, _HERE.parent / "_internal" / "liveboard"):
+    try:
+        if _d.is_dir() and str(_d) not in sys.path:
+            sys.path.insert(0, str(_d))
+    except OSError:
+        pass
+
 from board_core import (build_board, contest_over, frozen_cell_ids, missing_from_roster,
                         problem_stats, teams_expected)
 from pta_to_resolver_xml import compute_first_to_solve

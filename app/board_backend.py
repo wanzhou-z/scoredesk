@@ -267,7 +267,7 @@ def load_backend(root: Path) -> tuple[Any, Any, Any]:
     global _BACKEND
     if _BACKEND is not None:
         return _BACKEND
-    for entry in (str(root), str(root / "tools")):
+    for entry in (str(root), str(root / "tools"), str(Path(root) / "core")):
         if entry not in sys.path:
             sys.path.insert(0, entry)
     import pta_common as common          # noqa: E402
@@ -2153,8 +2153,10 @@ def check_environment(root: Path) -> list[Check]:
     checks: list[Check] = []
 
     # 1. 项目根目录
+    # 公开仓库布局：这些脚本在 core\ 下；打包后在 _internal\ 根。两处都认。
     need = [root / "pta_fetch.py", root / "pta_to_resolver_xml.py", root / "pta_common.py"]
-    missing = [p.name for p in need if not p.is_file()]
+    missing = [p.name for p in need
+               if not p.is_file() and not (Path(root) / "core" / p.name).is_file()]
     if missing:
         checks.append(Check(
             "后端脚本", False, f"在 {root} 找不到 {', '.join(missing)}",

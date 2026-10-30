@@ -4,6 +4,7 @@ rem Archives live in ..\data\archives (gitignored); seed it with archive.py.
 setlocal
 chcp 65001 >nul
 cd /d "%~dp0.."
+set "PYTHONPATH=%CD%\liveboard;%CD%\core;%CD%\app"
 
 if not exist data\archives mkdir data\archives
 

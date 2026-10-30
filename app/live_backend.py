@@ -556,6 +556,7 @@ def live_board_source() -> Path:
         cands.append(exe_dir / "live-board")
         cands.append(exe_dir / "_internal" / "live-board")
     cands.append(LIVE_BOARD_SOURCE)
+    cands.append(here.parent.parent / "liveboard")            # 公开仓库布局：<repo>\liveboard
     cands.append(here.parent.parent.parent / "live-board")     # ← M16b：仓库的上一级
     cands.append(here.parent / "live-board")
     for cand in cands:

@@ -4447,7 +4447,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="内部用：无头截图各页面后退出")
     parser.add_argument("--shot-out", default=None,
                         help="--headless-shot 的输出目录；默认 = 程序目录下的 shots\\"
-                             "（程序自己目录永远可写；本机 %TEMP% / tools\\ 对应用进程反而不可写）")
+                             "（程序自己目录永远可写；本机 %%TEMP%% / tools\\ 对应用进程反而不可写）")
     parser.add_argument("--geometry", default="1200x820", help="--headless-shot 的窗口尺寸")
     parser.add_argument("--shot-mode", default=None, choices=[MODE_LIVE, MODE_ROLL],
                         help="--headless-shot 只截某个模式的页面")
