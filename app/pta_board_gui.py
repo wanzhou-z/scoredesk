@@ -57,7 +57,7 @@ from rank_awards_panel import RankAwardsPanel  # noqa: E402
 
 _T_IMPORTS = time.perf_counter()
 
-APP_TITLE = "ScoreDeck — 赛后滚榜"
+APP_TITLE = "PTA 滚榜助手 (PTA Rolling Scoreboard)"
 GEOMETRY_RE = re.compile(r"^\d+x\d+([+-]\d+[+-]\d+)?$")
 
 GEOM_SIZE_RE = re.compile(r"^(\d+)x(\d+)(?:([+-]\d+)([+-]\d+))?$")
@@ -1132,7 +1132,7 @@ class BoardApp:
         ToolTip(self.psid_entry,
                 "要比哪一场比赛，就填哪一场的题目集 ID。\n"
                 "在浏览器打开这场比赛，地址栏里 /problem-sets/ 后面那串数字就是它，\n"
-                "例如 2100000000000000000。\n"
+                "例如 2107050785530253312。\n"
                 "不知道 ID？到「历史」页看看以前抓过的比赛，双击一行就能载入。")
         self.fetch_btn = self._solid_btn(row, "拉取数据", self.on_fetch,
                                          bg=self.C["accent"], hover=self.C["accent_hover"])
@@ -1600,9 +1600,9 @@ class BoardApp:
                 "不填就用应用所在目录下的「滚榜图片」子目录（本机自动定位，\n"
                 "与 exe / 启动脚本同一个文件夹）；目录不存在会自动创建。\n"
                 "文件名认这些写法（都可以带打星的 * / ＊ 前缀）：\n"
-                "  · 学号（2026001.jpg）—— 最稳，推荐；\n"
-                "  · 姓名（张三.jpg）；\n"
-                "  · 学号+姓名（2026001张三.jpg / 2026001_张三.jpg）。\n"
+                "  · 学号（26160358.jpg）—— 最稳，推荐；\n"
+                "  · 姓名（汪章正.jpg）；\n"
+                "  · 学号+姓名（26160358汪章正.jpg / 26160358_汪章正.jpg）。\n"
                 "支持 .jpg / .jpeg / .png。\n"
                 "生成比赛包时会复制进 <比赛包>\\teams\\<队伍ID>\\photo.jpg（teams 这一层必须有）。\n"
                 "建议 16:9 或更宽、1920x1080 以上 —— 照片会铺满整张奖项卡。\n"
@@ -1612,8 +1612,8 @@ class BoardApp:
         self.photos_hint = self._hint(
             row3b,
             f"现在用：{cfgmod.default_photos_dir()}（应用所在目录，不存在会自动创建）。"
-            "文件名按**学号优先**匹配（2026001.jpg），也认姓名（张三.jpg）；"
-            "学号+姓名连写（2026001张三.jpg / 2026001_张三.jpg）同样认；"
+            "文件名按**学号优先**匹配（26160358.jpg），也认姓名（汪章正.jpg）；"
+            "学号+姓名连写（26160358汪章正.jpg / 26160358_汪章正.jpg）同样认；"
             "打星的 * / ＊ 前缀自动容忍；支持 jpg/jpeg/png。"
             "生成后会复制进 <比赛包>\\teams\\<队伍ID>\\photo.jpg —— "
             "滚榜揭晓奖项时队伍照片会铺满整张奖项卡（背景）。"
@@ -1636,9 +1636,9 @@ class BoardApp:
                 "规则：\n"
                 "  · 文件名没有名字（.jpg 这种），或叫 logo / 校徽 / default / 机构\n"
                 "    → 默认校徽，所有队都用它；\n"
-                "  · 文件名 = 学号（2026002.png）→ 那支队的专属校徽（学号优先）；\n"
-                "  · 学号+姓名连写（2026002张三.png / 2026002_张三.png）也认；\n"
-                "  · 否则按姓名（张三.png）；打星的 * / ＊ 前缀自动容忍；\n"
+                "  · 文件名 = 学号（26130030.png）→ 那支队的专属校徽（学号优先）；\n"
+                "  · 学号+姓名连写（26130030张三.png / 26130030_张三.png）也认；\n"
+                "  · 否则按姓名（汪章正.png）；打星的 * / ＊ 前缀自动容忍；\n"
                 "  · 名字对不上任何队伍 → 忽略，生成日志里会列出来。\n"
                 "生成时会把校徽裁成圆形（居中裁成正方形 + 圆外透明）再放进\n"
                 "<比赛包>\\organizations\\<机构ID>\\logo.png；你的原文件不会被改动。\n"
@@ -1647,8 +1647,8 @@ class BoardApp:
         self.logos_hint = self._hint(
             row3d,
             f"现在用：{cfgmod.default_logos_dir()}（应用所在目录，不存在会自动创建）。"
-            "空名字（.jpg）或 logo/校徽/default/机构 = 默认校徽；学号优先（2026002.png），"
-            "也认姓名（张三.png）与学号+姓名连写（2026002张三.png）；打星 * / ＊ 前缀自动容忍；"
+            "空名字（.jpg）或 logo/校徽/default/机构 = 默认校徽；学号优先（26130030.png），"
+            "也认姓名（汪章正.png）与学号+姓名连写（26130030汪章正.png）；打星 * / ＊ 前缀自动容忍；"
             "对不上的会被忽略并在生成日志里列出。校徽会**裁成圆形**放进 "
             "<比赛包>\\organizations\\<机构ID>\\logo.png（你的原文件不动），"
             "显示在奖项卡左下角与榜单每一行上。",
@@ -2082,10 +2082,28 @@ class BoardApp:
         if self.busy:
             return
         self._collect_config()
-        psid = self.cfg["problem_set_id"]
-        if not psid.isdigit():
+        psid = str(self.cfg.get("problem_set_id") or "").strip()
+        # VJudge 版：题目集 ID 那一栏填的是 VJudge 比赛 ID，允许直接粘网址。
+        platform = str(self.cfg.get("platform") or "pta").strip().lower()
+        if platform == "vjudge":
+            normalized = backend.normalize_vjudge_contest(psid)
+            if not normalized:
+                self._psid_msg("VJudge 比赛 ID 应该是 862258 这种数字，"
+                               "也可以直接粘 https://vjudge.net/contest/862258#rank —— 请检查后再试",
+                               error=True)
+                self._set_status("VJudge 比赛 ID 格式不对，没有开始抓取")
+                self.psid_entry.focus_set()
+                return
+            if normalized != psid:
+                self.cfg["problem_set_id"] = normalized
+                try:
+                    self.psid_var.set(normalized)
+                except Exception:  # noqa: BLE001
+                    pass
+            psid = normalized
+        elif not psid.isdigit():
             # 就地反馈：红字 + 状态栏 + 聚焦输入框，不弹窗打断
-            self._psid_msg("题目集 ID 应该是一串数字，例如 2100000000000000000 —— 请检查后再试",
+            self._psid_msg("题目集 ID 应该是一串数字，例如 2107050785530253312 —— 请检查后再试",
                            error=True)
             self._set_status("题目集 ID 格式不对，没有开始抓取")
             self.psid_entry.focus_set()
@@ -2104,6 +2122,24 @@ class BoardApp:
             source_mode = "http"
 
             def job() -> None:
+                if platform == "vjudge":
+                    vj = backend.load_vjudge_backend(root)
+                    with backend.LogRedirect(self.sink):
+                        print("=" * 62)
+                        print("  只读体检：确认 VJudge 比赛 ID 能拉到 rank JSON（不写任何文件）")
+                        print("=" * 62)
+                    try:
+                        code = vj.main(["check", "--contest", psid])
+                    except SystemExit as exc:
+                        code = int(exc.code or 1)
+                    except Exception as exc:  # noqa: BLE001
+                        code = 1
+                        self._log(f"\n[错误] 体检异常：{exc}\n")
+                    self._post(lambda: self._fetch_done(
+                        {"ok": code == 0,
+                         "message": "体检通过，比赛 ID 可读，可以点「拉取数据」了。" if code == 0
+                         else f"体检没通过（退出码 {code}），原因见上面的日志。"}))
+                    return
                 pta_fetch, _x, _c = backend.load_backend(root)
                 via = "http"
                 with backend.LogRedirect(self.sink):
@@ -2123,7 +2159,9 @@ class BoardApp:
                      else f"体检没通过（退出码 {code}），原因见上面的日志。"}))
         else:
             def job() -> None:
-                result = backend.run_fetch(root, psid, source_mode, out_path, freeze, penalty, self.sink)
+                result = backend.run_fetch(root, psid, source_mode, out_path,
+                                           freeze, penalty, self.sink,
+                                           platform=platform)
                 self._post(lambda: self._fetch_done(result))
 
         self._msg(self.fetch_state,

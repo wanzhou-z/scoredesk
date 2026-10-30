@@ -54,7 +54,7 @@ def data_error_detail():
 #: 取数通道**恒为 http**：2026-10-13 起删除了「借用浏览器」通道，
 #: 全产品只有「直连接口 + 有效 Cookie」这一条取数路径。
 CHANNEL = "http"
-COOKIE_CANDIDATES = (BASE / "cookie.txt",)
+COOKIE_CANDIDATES = (BASE / "cookie.txt", Path(r"F:\PTA-Board\cookie.txt"))
 #: M14 强制全量刷新旗标（与 poller.py 里同一个文件）：界面按钮 / ``?refresh=full``
 #: 写它 -> poller 下一轮做一次「不限页数 + 刷新队伍名录」的完整全量，成功后删除。
 FORCE_FULL = BASE / "tmp" / "force-full.flag"
@@ -100,6 +100,13 @@ def cookie_error():
     没有就自己看一眼 cookie.txt 在不在 —— 这样**没有启动 poller** 时
     /health 也能说清「为什么现在取不到数」。
     """
+    # VJudge 平台：公开比赛匿名取数，**不需要 Cookie** —— 别报「Cookie 缺失」。
+    try:
+        platform = str((read_config() or {}).get("platform") or "").strip().lower()
+    except Exception:                                  # noqa: BLE001
+        platform = ""
+    if platform == "vjudge":
+        return None
     msg = read_state().get("cookie_error")
     if msg:
         return str(msg)
@@ -143,6 +150,12 @@ class _LazyLogoStore:
         store = self._get()
         return store.path(key) if store is not None else None
 
+    def path_specific(self, key):
+        """这一支队专属的校徽（匹配不到返回 None）；老版本 LogoStore 没有该方法时返回 None。"""
+        store = self._get()
+        getter = getattr(store, "path_specific", None) if store is not None else None
+        return getter(key) if callable(getter) else None
+
 LOGOS = _LazyLogoStore()
 
 class Handler(BaseHTTPRequestHandler):
@@ -169,8 +182,8 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc: self.send_bytes(json.dumps({"error":str(exc)}, ensure_ascii=False).encode(), "application/json; charset=utf-8", 400); return
         if u.path == "/health":
             s = read_state(); out = {k: s.get(k) for k in ("ok", "last_poll", "channel", "teams", "submissions")}
-            # 取数通道恒为 http（不再有「借用浏览器」回落），凭证拿不到时给 cookie_error。
-            out["channel"] = CHANNEL
+            # 取数通道：PTA 恒为 http；VJudge 轮次 poller 写的是 vjudge（没有 Cookie 这条）。
+            out["channel"] = s.get("channel") or CHANNEL
             out["cookie_error"] = cookie_error()
             # 数据文件有问题时把原因摊开给人看；正常时为 null（GUI 和人都能一眼看到降级运行）。
             out["data_error"] = data_status(); out["data_error_detail"] = data_error_detail()
@@ -260,6 +273,25 @@ class Handler(BaseHTTPRequestHandler):
             return
         if u.path.startswith("/logo/"):
             key = unquote(u.path.rsplit("/", 1)[-1]).removesuffix(".png")
+            # 校徽优先级（VJudge 版）：
+            #   ① 备注库指定的校徽 / ② 备注姓名或学号匹配到校徽目录（都在 LogoStore 里）
+            #   → ③ 抓取器缓存的 VJudge 头像 live\logos\<uid>.png（原图直接给，前端 .logo 已裁圆）
+            #   → ④ 默认校徽
+            path = LOGOS.path_specific(key)
+            if path and path.is_file():
+                self.send_bytes(path.read_bytes(), "image/png", extra={"Cache-Control": "public, max-age=300"})
+                return
+            #   → ③ VJudge 头像缓存 live\logos\<uid>.png（用多域名回退下载，见 vjudge_fetch）
+            safe = bool(key) and key not in (".", "..") and "/" not in key and "\\" not in key
+            if safe:
+                try:
+                    raw = BASE / "logos" / (key + ".png")
+                    if raw.is_file() and raw.stat().st_size > 0:
+                        self.send_bytes(raw.read_bytes(), "image/png",
+                                        extra={"Cache-Control": "public, max-age=120"})
+                        return
+                except OSError:
+                    pass
             path = LOGOS.path(key)
             if path and path.is_file(): self.send_bytes(path.read_bytes(), "image/png", extra={"Cache-Control": "public, max-age=300"})
             else: self.send_error(404)

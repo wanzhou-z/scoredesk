@@ -480,6 +480,7 @@ function render(s) {
   const wasFrozen = !!(model.last && model.last.frozen);
   const thaw = wasFrozen && !s.frozen;
   model.last = s;
+  model.source = String(s.source || model.source || '').toLowerCase();
   clock(s);
   const timestamp = s.last_poll || s.updated;
   document.getElementById('updated').textContent = timestamp ? new Date(timestamp).toLocaleTimeString('zh-CN', {hour12:false}) : '--';
@@ -555,7 +556,9 @@ function render(s) {
     const rankHtml = classicView
       ? '<span class="rank ' + (t.rank <= 3 ? 'top' + t.rank : '') + '">' + (up && opt.anim ? '<span class="arrow">↑</span>' : '') + t.rank + '</span>'
       : '<span class="rank' + (medal ? ' medal-' + medal.index : '') + '">' + (up && opt.anim ? '<span class="arrow">↑</span>' : '') + t.rank + '</span>';
-    const logoSrc = '/logo/' + encodeURIComponent(t.team_id);
+    // 用户 2026-10-27：VJudge 头像功能已删除，但浏览器还缓存着旧头像 ——
+    //   加个版本号让浏览器重新取一次（取不到就按 404 收尾，不会留下半坏的头像）。
+    const logoSrc = '/logo/' + encodeURIComponent(t.team_id) + '?v=vj2';
     // 标志列：走现有 /logo/<team_id> 路由（服务端已按 学号 → 姓名 → 默认校徽 匹配并裁圆）
     const logoHtml = '<span class="row-logo"><img class="logo" src="' + logoSrc + '" data-src="' + logoSrc + '" alt="校徽" onload="logoOk(this)" onerror="logoRetry(this)"></span>';
     // M17 口径微调：滚榜页模板的队伍区**只显示队名**（第二行留空，不放学号/userId/占位符）；
@@ -648,7 +651,13 @@ function layout() {
   // M28：人数不满「一屏行数」时把下限放宽到 44，让整页真的能装下 -> 不出现滚动。
   //      正常情况（队伍数 >= 一屏行数）下限仍是 74，视觉与以前完全一致。
   const shrinkFloor = (opt.rows && teamsN && teamsN < opt.rows) ? 44 : 74;
-  const rowHeight = Math.min(86, Math.max(shrinkFloor, Math.floor((available-(count-1)*rowsGap)/count)));
+  // 用户 2026-10-27（VJudge 只有 6 支队 -> 榜下面一大片空白）：
+  //   空格子时把行高往上放（上限 160px），让整张榜把屏幕吃满，而不是顶着 86px 留白。
+  const fitRows = Math.floor((available - (count - 1) * rowsGap) / count);
+  // 只在 VJudge 版放大行高（PTA 保持原来的 86 上限，行为不变）
+  const isVjudge = (model.source === 'vjudge');
+  const rowCap = (isVjudge && fitRows > 86 && count <= 14) ? 160 : 86;
+  const rowHeight = Math.min(rowCap, Math.max(shrinkFloor, fitRows));
   document.documentElement.style.setProperty('--row-height', rowHeight + 'px');
   // 行高够（≥74）走滚榜页的两栏；不够（小屏/队伍多）压缩成单栏，避免裁字
   // 屏幕很矮（<620px）时才退化成单栏，避免两栏被挤扁

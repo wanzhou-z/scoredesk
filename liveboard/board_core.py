@@ -6,20 +6,23 @@ from typing import Any
 def _find_resolver_dir() -> Path:
     """定位 ``pta_to_resolver_xml.py`` 所在的目录（发布版不能写死本机路径）。
 
-    按顺序找，谁真的含 ``pta_to_resolver_xml.py`` 就用谁：
+    M13（4c）：原来写死了一个本机绝对路径，发给别人就找不到模块。
+    现在按顺序找，谁真的含 ``pta_to_resolver_xml.py`` 就用谁：
 
       1. 环境变量 ``PTA_RESOLVER_DIR``（部署时可以覆盖）；
-      2. 本文件所在目录（几个模块被拷到一起时）；
-      3. 仓库形状：父目录下的 ``core\\``（本仓库）或 ``pta-resolver\\``（旧布局）；
-      4. 打包形状：父目录下的 ``_internal\\core\\``。
+      2. 本文件的**父目录** —— 打包后 live-board 与那几个模块同在 ``_internal\\``；
+      3. 父目录下的 ``pta-resolver\\`` —— 源码仓库里的形状；
+      4. 旧的本机绝对路径（兼容老部署，排在最后）。
     """
     here = Path(__file__).resolve().parent
     cands = []
     env = os.environ.get("PTA_RESOLVER_DIR")
     if env:
         cands.append(Path(env))
-    cands += [here, here.parent, here.parent / "core", here.parent / "pta-resolver",
-              here.parent / "_internal" / "core"]
+    # 打包后：poller 跑在 <程序根>\live\，模块其实在 <程序根>\_internal\，
+    # 所以 _internal 必须排在"写死的旧路径"前面，否则会误用本机上的 PTA 开发树。
+    cands += [here.parent, here.parent / "_internal",
+              here.parent / "pta-resolver", here.parent / "_internal" / "pta-resolver"]
     for cand in cands:
         try:
             if (cand / "pta_to_resolver_xml.py").is_file():
@@ -288,8 +291,16 @@ def build_board(contest,*,display_time=None,freeze_mode="operator"):
     penalty=int((contest.get("contest") or {}).get("penalty_minutes") or 20)
     # PTA 榜单按整分钟显示；仍调用已验证的 compute_ranking。
     rank_input=copy.deepcopy(contest)
-    for sub in rank_input.get("submissions",[]):
-        if sub.get("rel_time_seconds") is not None: sub["rel_time_seconds"]=(int(sub["rel_time_seconds"])//60)*60
+    # 用户 2026-10-27：VJudge 的罚时是「每题按整分钟**向上**取整」；PTA 是向下取整。
+    #   这里按来源选口径，否则 VJudge 榜会每题少算零点几分钟（13 题差 6 分钟）。
+    _vj = str(contest.get("source") or "").lower() == "vjudge"
+    # 实测口径（2026-10-27 拿 6 支队逐一核对）：
+    #   VJudge = 把「每题秒数/60」原样相加，最后整体四舍五入 —— 所以这里**不要**逐条截断；
+    #   PTA   = 习惯按整分钟（向下）计，保持原样以免把已经对齐的 PTA 榜弄偏。
+    if not _vj:
+        for sub in rank_input.get("submissions",[]):
+            if sub.get("rel_time_seconds") is not None:
+                sub["rel_time_seconds"]=(int(sub["rel_time_seconds"])//60)*60
     ranked=compute_ranking(rank_input,penalty)
     active=_active_team_ids(contest); probs=contest.get("problems") or []
     # 封榜判定（M11）：只看"是否已过封榜时刻"，比赛结束也一样。
@@ -402,7 +413,7 @@ def problem_stats(contest,display_time=None):
     return {pid:{"ac_teams":len(ac_teams[pid]),"subs":subs[pid]} for pid in pids}
 
 
-def make_state(contest,*,channel,last_poll,display_time=None,event=None):
+def make_state(contest,*,channel,last_poll,display_time=None,event=None,freeze_seconds=None):
     """轮询器落盘的 state：**封榜后永久保持封榜**，比赛结束也不自动揭示。
 
     ``frozen`` 语义（M11 收敛为一条）：``display_time`` 已过封榜时刻 → True，此后一直 True，
@@ -414,6 +425,17 @@ def make_state(contest,*,channel,last_poll,display_time=None,event=None):
     ``data_incomplete`` / ``data_note`` / ``fetch_report``（``pta_fetch`` 写进 contest.json 的
     那份抓取报告：页数、是否被 ``--max-pages`` 截断、用时）。
     """
+    # 用户 2026-10-24：实时榜单也要能改封榜时长（和滚榜页共用一份值）。
+    #   ``freeze_seconds`` 给了就覆盖比赛自带的封榜时长（0 表示"不封榜"，None 表示照旧）。
+    if freeze_seconds is not None:
+        try:
+            override=float(freeze_seconds)
+        except (TypeError, ValueError):
+            override=None
+        if override is not None and override>=0 and isinstance(contest,dict) and isinstance(contest.get("contest"),dict):
+            contest=dict(contest)
+            contest["contest"]=dict(contest["contest"])
+            contest["contest"]["freeze_seconds"]=override
     board=build_board(contest,display_time=display_time); cmeta=contest.get("contest") or {}; duration=float(cmeta.get("duration_seconds") or 0); freeze=float(cmeta.get("freeze_seconds") or 0)
     now=display_time if display_time is not None else duration
     freeze_at=max(0.0,duration-freeze) if freeze else None
@@ -438,7 +460,7 @@ def make_state(contest,*,channel,last_poll,display_time=None,event=None):
             note+="：本轮提交抓取被 --max-pages 截断（只扫了 %s 页），请点「全量刷新」" % report.get("pages")
     # M23：每题「AC 队伍数 / 提交总次数」写进 problems[]（只新增 ac_teams/subs 两个键）。
     _pstats=problem_stats(contest,now if display_time is not None else None)
-    return {"ok":True,"last_poll":last_poll,"channel":channel,"teams":len(board),"submissions":len(contest.get("submissions") or []),"frozen":frozen,"freeze_at":freeze_at,"contest":cmeta,"problems":[{"id":p.get("id"),"label":p.get("label") or p.get("letter"),"name":p.get("name"),"ac_teams":_pstats.get(str(p.get("id")),{}).get("ac_teams",0),"subs":_pstats.get(str(p.get("id")),{}).get("subs",0)} for p in contest.get("problems") or []],"board":board,"event":event,
+    return {"ok":True,"source":("vjudge" if str(contest.get("source") or "").strip().lower() == "vjudge" else "pta"),"last_poll":last_poll,"channel":channel,"teams":len(board),"submissions":len(contest.get("submissions") or []),"frozen":frozen,"freeze_at":freeze_at,"contest":cmeta,"problems":[{"id":p.get("id"),"label":p.get("label") or p.get("letter"),"name":p.get("name"),"ac_teams":_pstats.get(str(p.get("id")),{}).get("ac_teams",0),"subs":_pstats.get(str(p.get("id")),{}).get("subs",0)} for p in contest.get("problems") or []],"board":board,"event":event,
             # M11 新增键（不改已有键含义）：封榜快照与「比赛是否走完」。
             "freeze_snapshot_at":freeze_at if frozen else None,
             "contest_over":over,

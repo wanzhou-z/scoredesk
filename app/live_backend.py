@@ -36,7 +36,7 @@ except Exception:        # noqa: BLE001 - 缺了也不能让整个应用起不�
     child_registry = None  # type: ignore[assignment]
 
 #: live-board 源码位置（开发机固定；打包后走 _MEIPASS / exe 同目录）
-LIVE_BOARD_SOURCE = Path(__file__).resolve().parent.parent / "liveboard"
+LIVE_BOARD_SOURCE = Path(__file__).resolve().parent.parent / "live-board"
 #: 旧配置里可能写的端口（别人的回放进程占用中，只用于「这是别人的」提示）
 OTHER_PORT = 8765
 DEFAULT_PORT = 8791
@@ -47,6 +47,8 @@ COPY_FILES = (
     "board_core.py", "contest_api.py", "presentation.py", "poller.py",
     "server.py", "replay.py", "launcher.py", "config.json",
     "contest.json", "state.json",
+    # VJudge 版第一步：两个平台适配文件（运行目录里也会用到它们）
+    "vjudge_fetch.py", "vjudge_alias.py",
 )
 COPY_DIRS = ("web",)
 
@@ -547,17 +549,14 @@ def live_board_source() -> Path:
     cands: list[Path] = []
     base = getattr(sys, "_MEIPASS", None)
     if base:
-        cands.append(Path(base) / "liveboard")
-        cands.append(Path(base) / "app" / "liveboard")
+        cands.append(Path(base) / "live-board")
+        cands.append(Path(base) / "app" / "live-board")
     if is_frozen():
         exe_dir = Path(sys.executable).resolve().parent
-        cands.append(exe_dir / "liveboard")
-        cands.append(exe_dir / "_internal" / "liveboard")
+        cands.append(exe_dir / "live-board")
+        cands.append(exe_dir / "_internal" / "live-board")
     cands.append(LIVE_BOARD_SOURCE)
-    cands.append(here.parent.parent.parent / "liveboard")      # 仓库的上一级
-    cands.append(here.parent / "liveboard")
-    # 兼容旧目录名（老部署 / 老发行版）
-    cands.append(here.parent.parent / "live-board")
+    cands.append(here.parent.parent.parent / "live-board")     # ← M16b：仓库的上一级
     cands.append(here.parent / "live-board")
     for cand in cands:
         if is_live_board(cand):
@@ -765,6 +764,27 @@ def read_json(path: Path, default: Any = None) -> Any:
         return json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return default
+
+
+#: 两个平台：pta（默认，需要 Cookie）/ vjudge（公开赛匿名接口，不需要 Cookie）
+PLATFORMS = ("pta", "vjudge")
+
+
+def normalize_platform(value: Any) -> str:
+    """把界面 / 配置里的平台值规整成 ``pta`` / ``vjudge``。"""
+    text = str(value or "").strip().lower()
+    return "vjudge" if text == "vjudge" else "pta"
+
+
+def run_platform(run: Path) -> str:
+    """读运行目录 ``config.json`` 里的 ``platform``（读不到按 pta）。"""
+    cfg = read_json(Path(run) / "config.json", {})
+    return normalize_platform((cfg or {}).get("platform") if isinstance(cfg, dict) else None)
+
+
+def needs_cookie(platform: str) -> bool:
+    """这个平台取数是否需要 Cookie（只有 PTA 需要）。"""
+    return normalize_platform(platform) != "vjudge"
 
 
 def write_live_config(run: Path, payload: dict[str, Any]) -> tuple[bool, str]:
@@ -1039,7 +1059,7 @@ def kill_pid(pid: int, timeout: float = 5.0) -> tuple[bool, str]:
 def find_python() -> str:
     """找一个**真的 Python 解释器**来跑 poller / server。
 
-    打包后的 ``sys.executable`` 是 ScoreDeck.exe（PyInstaller 引导程序），
+    打包后的 ``sys.executable`` 是 PTA-Assistant.exe（PyInstaller 引导程序），
     直接拿它去跑 ``xxx.py`` 只会把 exe 自己再启动一遍 —— 实测就是
     「Exception in Tkinter callback」。所以这里按顺序找：
       1) 环境变量 PTA_PYTHON（现场可以自己指定）
@@ -1326,8 +1346,10 @@ class LiveService:
         # server.py 启动即读 live\config.json，缺了会直接崩（打包首次运行必现）
         cfg_ok, cfg_note = seed_live_config(
             self.run, live_config, port=int(port))
+        platform = run_platform(self.run)
         cookie, cookie_path = read_cookie(self.work_root)
-        problem = cookie_problem(self.work_root)
+        # VJudge 公开赛不需要 Cookie —— 别拿 PTA 的判据拦住它。
+        problem = cookie_problem(self.work_root) if needs_cookie(platform) else ""
         env = child_env(self.run)
         # Cookie 缺失/明显不可用：**不启动轮询**（绝不每 20 秒撞一次 401）。
         # server 照常起来给界面/日志，/health 会带 cookie_error 说明原因。
@@ -1363,6 +1385,7 @@ class LiveService:
                 "contest_wait": round(waited, 1),
                 "poller_log": str(self.poller_log), "server_log": str(self.server_log),
                 "has_cookie": bool(cookie), "cookie_error": problem or "",
+                "platform": platform,
                 # M16b：把「运行目录资源同步」的逐条日志交回界面（以前这里被丢掉了，
                 # 用户升级后运行目录还是旧的却看不到任何提示）
                 "sync_notes": sync_notes}
@@ -1373,7 +1396,8 @@ class LiveService:
         self.sync()
         if self.poller:
             self.poller.stop()
-        problem = cookie_problem(self.work_root)
+        platform = run_platform(self.run)
+        problem = cookie_problem(self.work_root) if needs_cookie(platform) else ""
         if problem:
             self.poller = None
             return {"ok": False, "pids": self.pids(), "cookie_error": problem}
@@ -1570,6 +1594,10 @@ def default_live_config(port: int = DEFAULT_PORT) -> dict[str, Any]:
         "poll_interval": 5,
         "full_check_interval": 120,
         "channel": "auto",
+        #: 取数平台（poller 每轮重读本文件）：pta / vjudge
+        "platform": "pta",
+        #: 当前比赛 ID（VJudge = 比赛 ID；PTA = 题目集 ID）
+        "contest_id": "",
         "title": "",
         "freeze_mode": "operator",
         "logos_dir": str(_app_root() / "校徽"),

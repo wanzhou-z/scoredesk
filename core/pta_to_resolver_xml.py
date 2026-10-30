@@ -138,6 +138,11 @@ def compute_ranking(contest: dict[str, Any], penalty_minutes: int) -> list[dict[
     valid_problems = {str(p["id"]) for p in problems if p.get("id")}
     by_acronym = {j["acronym"]: j for j in C.JUDGEMENTS}
 
+    # 用户 2026-10-27：VJudge 的罚时是「每道通过的题按整分钟向上取整」再相加
+    #   （实测 13 题差 6 分钟 = 每题的小数部分被抹掉）。PTA 那边保持原来的精确相加，
+    #   不要因为改这个把已经对齐的 PTA 榜弄偏。
+    ceil_ac_minutes = str(contest.get("source") or "").lower() == "vjudge"
+
     state: dict[str, dict[str, Any]] = {}
     for team in teams:
         tid = team.get("userId")
@@ -173,6 +178,8 @@ def compute_ranking(contest: dict[str, Any], penalty_minutes: int) -> list[dict[
         if judgement is None:
             continue
         if judgement["solved"]:
+            # 取整口径统一放在 board_core（按来源 ceil/floor），这里只做精确相加，
+            # 否则 VJudge 会被"取整两次"，罚时反而比网页多几分钟。
             entry["penalty"] += max(0.0, float(rel)) / 60.0
             entry["penalty"] += penalty_minutes * entry["wrong"].get(pid, 0)
             entry["solved"].add(pid)
@@ -186,7 +193,12 @@ def compute_ranking(contest: dict[str, Any], penalty_minutes: int) -> list[dict[
     for idx, entry in enumerate(ranked):
         entry["rank"] = idx + 1
         entry["solved_count"] = len(entry["solved"])
-        entry["penalty"] = int(round(entry["penalty"]))
+        # 用户 2026-10-27：VJudge 网页的罚时是「秒数总和 / 60 后**向下取整**」
+        #   （6 支队逐一核对过）；PTA 仍用四舍五入，保持原有对齐。
+        if ceil_ac_minutes:
+            entry["penalty"] = int(entry["penalty"])
+        else:
+            entry["penalty"] = int(round(entry["penalty"]))
     return ranked
 
 

@@ -267,7 +267,7 @@ def load_backend(root: Path) -> tuple[Any, Any, Any]:
     global _BACKEND
     if _BACKEND is not None:
         return _BACKEND
-    for entry in (str(root), str(root / "tools"), str(root / "core")):
+    for entry in (str(root), str(root / "tools")):
         if entry not in sys.path:
             sys.path.insert(0, entry)
     import pta_common as common          # noqa: E402
@@ -276,6 +276,55 @@ def load_backend(root: Path) -> tuple[Any, Any, Any]:
 
     _BACKEND = (pta_fetch, xmlmod, common)
     return _BACKEND
+
+
+_BACKEND_VJ: Any = None
+
+
+def load_vjudge_backend(root: Path) -> Any:
+    """导入 ``vjudge_fetch``（VJudge 平台用）。返回模块对象。
+
+    与 :func:`load_backend` 分开：PTA 的 Cookie / pta_common 跟 VJudge 无关，
+    VJudge 版抓取器是**自包含**的（只依赖 requests），公开赛不需要 Cookie。
+    """
+    global _BACKEND_VJ
+    if _BACKEND_VJ is not None:
+        return _BACKEND_VJ
+    root = Path(root)
+    for entry in (str(root), str(root / "tools")):
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+    import vjudge_fetch                     # noqa: E402
+    _BACKEND_VJ = vjudge_fetch
+    return _BACKEND_VJ
+
+
+def normalize_vjudge_contest(value: Any) -> str:
+    """把用户填的 VJudge 比赛 ID 归一成纯数字：
+
+    接受 ``862258`` / ``https://vjudge.net/contest/862258#rank`` / ``vjudge.net/contest/862258``。
+    认不出来返回空串（调用方给中文提示）。**不 import 网络模块**，纯字符串处理。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.isdigit():
+        return text
+    # URL：找 /contest/<数字>
+    try:
+        from urllib.parse import urlsplit
+        raw = urlsplit(text if "://" in text else "https://" + text)
+        parts = [p for p in raw.path.split("/") if p]
+        for i, part in enumerate(parts):
+            if part == "contest" and i + 1 < len(parts) and parts[i + 1].isdigit():
+                return parts[i + 1]
+        for part in reversed(parts):
+            if part.isdigit():
+                return part
+    except Exception:  # noqa: BLE001 - 解析不了就走下面的兜底
+        pass
+    digits = re.findall(r"\d+", text)
+    return digits[-1] if digits else ""
 
 
 def cookie_available(root: Path) -> tuple[bool, str]:
@@ -305,11 +354,20 @@ def run_fetch(
     freeze_minutes: int,
     penalty_minutes: int,
     sink: LogSink,
+    platform: str = "pta",
 ) -> dict[str, Any]:
-    """抓取比赛数据，等价于 ``python pta_fetch.py fetch ...``。
+    """抓取比赛数据，按 ``platform`` 分派：
+
+    * ``pta``（默认）= ``python pta_fetch.py fetch ...``（需要有效 Cookie）；
+    * ``vjudge``     = ``python vjudge_fetch.py fetch --contest ...``
+      （匿名公开接口，拿不到封榜 / 题名，详见 vjudge_fetch.py）。
 
     返回 {'ok', 'message', 'via_used', 'title', 'stats'}。
     """
+    platform = str(platform or "pta").strip().lower()
+    if platform == "vjudge":
+        return _run_fetch_vjudge(root, psid, out_path, freeze_minutes, penalty_minutes, sink)
+
     pta_fetch, _xmlmod, common = load_backend(root)
 
     psid = str(psid).strip()
@@ -325,7 +383,7 @@ def run_fetch(
         "--penalty", str(max(0, int(penalty_minutes))),
         # M38（用户 2026-10-18）：每次「拉取数据」都重新读一遍队伍名录。
         #   以前不带这个开关，pta_fetch 会**复用缓存里的队伍**（第一次抓到的 17 支），
-        #   后来进群的队永远进不来，表现为「拉取的数据不全」。
+        #   后来进群的队（杨晨、郑奥）永远进不来，表现为「拉取的数据不全」。
         "--refresh-meta",
     ]
 
@@ -412,6 +470,114 @@ def _fetch_failure_hint(code: int, via: str, log_text: str) -> str:
     return base + "\n  详细原因见上面的日志；常见原因是 Cookie 过期或 PTA 接口有变动。"
 
 
+def _run_fetch_vjudge(
+    root: Path,
+    contest_id: str,
+    out_path: Path,
+    freeze_minutes: int,
+    penalty_minutes: int,
+    sink: "LogSink",
+) -> dict[str, Any]:
+    """VJudge 平台的一次全量抓取（公开接口，不需要 Cookie）。
+
+    输出与 PTA 版**完全同构**的 contest.json，下游不用知道来源是 VJudge。
+    """
+    result: dict[str, Any] = {"ok": False, "via_used": "vjudge", "message": "",
+                              "title": "", "stats": {}}
+    cid = normalize_vjudge_contest(contest_id)
+    if not cid:
+        result["message"] = (f"VJudge 比赛 ID 认不出来：{str(contest_id)!r}\n"
+                             "  请填 862258 这种数字，或直接粘 "
+                             "https://vjudge.net/contest/862258#rank")
+        return result
+    try:
+        vj = load_vjudge_backend(root)
+    except Exception as exc:  # noqa: BLE001
+        result["message"] = f"找不到 vjudge_fetch.py（VJudge 版抓取器）：{exc}"
+        return result
+
+    code = 1
+    with LogRedirect(sink):
+        print("=" * 62)
+        print("  开始抓取 VJudge 比赛数据")
+        print("=" * 62)
+        print(f"  比赛 ID  : {cid}")
+        print(f"  输出文件 : {out_path}")
+        print(f"  罚时     : {max(0, int(penalty_minutes))} 分钟")
+        print("  说明     : VJudge 走匿名公开接口，不需要 Cookie；")
+        print("             拿不到封榜设置 / 题目标题（题目用字母 A/B/… 代替）。")
+        argv = ["fetch", "--contest", cid, "--out", str(out_path),
+                "--penalty", str(max(0, int(penalty_minutes)))]
+        try:
+            code = int(vj.main(argv) or 0)
+        except SystemExit as exc:
+            code = int(exc.code or 0)
+            if code == 0:
+                print("[i] 抓取流程已结束。")
+        except Exception as exc:  # noqa: BLE001
+            print(f"\n[错误] 抓取过程中出现未预期的问题：{type(exc).__name__}: {exc}")
+
+    if code != 0:
+        if code == 3:
+            result["message"] = ("[失败] VJudge 上读不到这场比赛（HTTP 4xx）："
+                                 "检查比赛 ID；私有比赛需要 Cookie（本版本未做密码赛登录）。")
+        elif code == 6:
+            result["message"] = "[失败] 网络不通 / VJudge 超时：检查网络或代理，稍后重试。"
+        elif code == 5:
+            result["message"] = "[失败] VJudge 返回内容不是预期 JSON（接口可能变更）。"
+        else:
+            result["message"] = f"[失败] 抓取没有成功（退出码 {code}），详情见上面的日志。"
+        print(result["message"])
+        return result
+
+    if not Path(out_path).is_file():
+        result["message"] = f"抓取报告成功，但没有生成 {out_path}，请看上面的日志。"
+        return result
+
+    # 用户 2026-10-27：VJudge 接口不返回封榜设置 —— 封榜时长以界面上填的为准，
+    #   抓完写回 contest.json（滚榜 / 外榜都从这里读）。
+    try:
+        doc = json.loads(Path(out_path).read_text(encoding="utf-8"))
+        cmeta = doc.get("contest") if isinstance(doc.get("contest"), dict) else {}
+        freeze_sec = max(0, int(freeze_minutes)) * 60
+        if freeze_sec != int(cmeta.get("freeze_seconds") or 0):
+            cmeta["freeze_seconds"] = freeze_sec
+            hh, mm = divmod(freeze_sec // 60, 60)
+            cmeta["freeze_length"] = f"{hh}:{mm:02d}:00"
+            doc["contest"] = cmeta
+            warns = doc.get("warnings")
+            if not isinstance(warns, list):
+                warns = []
+            warns.append(f"封榜时长按界面设置写入：{int(freeze_minutes)} 分钟"
+                         "（VJudge 接口本身不提供该设置）。")
+            doc["warnings"] = warns
+            tmp = Path(str(out_path) + ".tmp")
+            tmp.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(out_path)
+        print(f"  封榜时长 : {int(freeze_minutes)} 分钟（已写入 contest.json）")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] 封榜时长写回失败（不影响榜单）：{type(exc).__name__}: {exc}")
+    try:
+        with open(out_path, "r", encoding="utf-8") as fh:
+            contest = json.load(fh)
+        stats = contest.get("stats") or {}
+        meta = contest.get("contest") or {}
+        result["title"] = meta.get("title") or ""
+        result["stats"] = stats
+    except Exception as exc:  # noqa: BLE001
+        result["message"] = f"抓取完成，但读回 {out_path} 时出错：{exc}"
+        return result
+
+    result["ok"] = True
+    result["message"] = (
+        f"抓取成功（VJudge）：《{result['title']}》 "
+        f"{result['stats'].get('problem_count', 0)} 题 / "
+        f"{result['stats'].get('team_count', 0)} 队 / "
+        f"{result['stats'].get('submission_count', 0)} 条提交"
+    )
+    return result
+
+
 # --------------------------------------------------------------------------
 # 生成比赛包
 # --------------------------------------------------------------------------
@@ -468,7 +634,7 @@ ORG_ID = "1"
 ORG_NAME = "PTA"
 
 
-#: 「学号 + 姓名」连写时的分隔符（``2026001张三`` 没有分隔符，也照样拆）。
+#: 「学号 + 姓名」连写时的分隔符（``26130030张三`` 没有分隔符，也照样拆）。
 _COMBINED_SEP = re.compile(r"[\s_\-—–+·.,，、|/\\]+")
 #: 学号最少几位才当学号用（4 位起，够短又不容易把普通词当学号）。
 _NUMBER_MIN_LEN = 4
@@ -494,11 +660,11 @@ def _split_combined_keys(stem: str) -> list[str]:
 
     支持这些写法（星号前缀先去掉）::
 
-        2026001张三.jpg      -> ["2026001", "张三"]
-        2026001_张三.jpg     -> ["2026001", "张三"]
-        2026001-张三.jpg     -> ["2026001", "张三"]
-        张三2026001.jpg      -> ["张三", "2026001"]
-        *2026001张三.jpg     -> ["2026001", "张三"]
+        26130030张三.jpg      -> ["26130030", "张三"]
+        26130030_张三.jpg     -> ["26130030", "张三"]
+        26130030-张三.jpg     -> ["26130030", "张三"]
+        张三26130030.jpg      -> ["张三", "26130030"]
+        *26130030张三.jpg     -> ["26130030", "张三"]
 
     只用得到「学号段」和「姓名段」，匹配时按 **学号优先** 查（见 match_team_photos）。
     """
@@ -515,18 +681,18 @@ def _split_combined_keys(stem: str) -> list[str]:
                 keys.append(part)                     # 整段就是学号
                 continue
             head = re.match(rf"^(\d{{{_NUMBER_MIN_LEN},}})(.+)$", part)
-            if head:                                  # 学号在前：2026001张三
+            if head:                                  # 学号在前：26130030张三
                 keys.append(head.group(1))
                 rest = head.group(2).strip()
                 if rest:
                     keys.append(rest)
                 continue
             tail = re.match(rf"^(.+?)(\d{{{_NUMBER_MIN_LEN},}})$", part)
-            if tail:                                  # 姓名在前：张三2026001
+            if tail:                                  # 姓名在前：张三26130030
                 keys.append(tail.group(1).strip())
                 keys.append(tail.group(2))
                 continue
-            keys.append(part)                         # 其余段（2026001_张三 的「张三」）
+            keys.append(part)                         # 其余段（26130030_张三 的「张三」）
     return list(dict.fromkeys(k for k in keys if k))
 
 
@@ -538,8 +704,8 @@ def build_image_index(folder: Path, exts: tuple[str, ...]) -> dict[str, Path]:
     1. 第一遍：文件名主干（原样 + 去星号）—— 最高优先级；
     2. 第二遍：``学号+姓名`` 连写时拆出的 ``学号`` / ``姓名`` 子键 —— 只补没占用的键。
 
-    这样 ``2026001.jpg`` 与 ``2026001张三.jpg`` 同时在目录里时，
-    队伍 ``2026001`` 命中的是**精确同名**的那张，不会被合并名抢走。
+    这样 ``26130030.jpg`` 与 ``26130030张三.jpg`` 同时在目录里时，
+    队伍 ``26130030`` 命中的是**精确同名**的那张，不会被合并名抢走。
     """
     index: dict[str, Path] = {}
     try:
@@ -577,8 +743,8 @@ def _photo_index_ext(folder: Path, exts: tuple[str, ...]) -> dict[str, Path]:
 def match_team_photos(teams: list[dict[str, Any]], photos_dir: Path) -> dict[str, Any]:
     """把图片目录里的照片按「学号 -> 姓名」匹配到队伍。
 
-    文件名认得这些写法（都容忍开头 ``*`` / ``＊``）：``2026001.jpg``（学号）、
-    ``张三.jpg``（姓名）、``2026001张三.jpg`` / ``2026001_张三.jpg``（学号+姓名）。
+    文件名认得这些写法（都容忍开头 ``*`` / ``＊``）：``26130030.jpg``（学号）、
+    ``张三.jpg``（姓名）、``26130030张三.jpg`` / ``26130030_张三.jpg``（学号+姓名）。
     **学号优先**：先按学号查，查不到再按姓名查；查到时报告里会写明命中方式。
     """
     index = _photo_index(photos_dir)
@@ -714,7 +880,7 @@ def attach_team_photos(package_dir: Path, teams: list[dict[str, Any]],
 
 
 def _logo_stem_ext(name: str) -> tuple[str, str]:
-    """把 ``.jpg`` / ``2026001.png`` 拆成 (主干, 扩展名)。
+    """把 ``.jpg`` / ``26130030.png`` 拆成 (主干, 扩展名)。
 
     坑：``Path('.jpg').suffix`` 是空串、``.stem`` 是 ``'.jpg'`` —— 用户目录里那张
     名字为空的校徽就会既没有扩展名也没有主干。所以这里按**名字尾巴**判断，
@@ -759,9 +925,11 @@ def match_team_logos(teams: list[dict[str, Any]], logos_dir: Path) -> dict[str, 
     """按「默认 / 学号 / 姓名」把校徽目录匹配到队伍。
 
     规则（用户口径）：
+      * **队伍自带 ``logo`` 键**（VJudge 备注库填的校徽）-> 优先用它：可以是
+        校徽目录里的文件名 / 主干，也可以是已经存在的图片绝对路径；
       * 文件名主干为空（``.jpg``）或写成 logo / 校徽 / default / 机构 -> **默认校徽**；
       * 主干 = 某队**学号** -> 该队专属校徽（学号优先）；
-      * 主干 = ``学号+姓名`` 连写（``2026001张三`` / ``2026001_张三``）-> 也认；
+      * 主干 = ``学号+姓名`` 连写（``26130030张三`` / ``26130030_张三``）-> 也认；
       * 否则主干 = 某队**姓名**（开头 ``*`` 自动去掉）-> 该队专属校徽；
       * 都对不上 -> 不参与匹配，报告里列出来（不再"匹配不到就用第一张"）。
 
@@ -786,13 +954,34 @@ def match_team_logos(teams: list[dict[str, Any]], logos_dir: Path) -> dict[str, 
             default = hit
             break
 
+    # VJudge 备注库里的「校徽」：URL 由抓取器先下载成本地文件；这里认
+    # ① 已存在的图片路径 ② 校徽目录里的文件名 / 主干。
+    def _explicit_logo(raw: str) -> Path | None:
+        text = str(raw or "").strip()
+        if not text or text.lower().startswith(("http://", "https://")):
+            return None
+        path = Path(text)
+        if path.is_file():
+            return path
+        base = path.name.lower()
+        for key in (base, base.rsplit(".", 1)[0] if "." in base else base,
+                    path.stem.lower()):
+            hit = index.get(key)
+            if hit is not None:
+                return hit
+        return None
+
     matched: list[tuple[dict[str, Any], Path, str]] = []
     for team in teams:
         number = str(team.get("studentNumber") or "").strip().lower()
         name = str(team.get("name") or "").strip()
         hit: Path | None = None
         how = ""
-        if number:
+        # ① 备注库指定的校徽最优先（只影响这一支队）
+        explicit = _explicit_logo(str(team.get("logo") or ""))
+        if explicit is not None:
+            hit, how = explicit, "备注校徽"
+        if hit is None and number:
             hit = index.get(number)
             if hit is not None:
                 how = "学号"
@@ -817,6 +1006,45 @@ def match_team_logos(teams: list[dict[str, Any]], logos_dir: Path) -> dict[str, 
         "unused": unused,
         "skipped": skipped,
     }
+
+
+def vjudge_teams_with_avatar_logo(teams: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    r"""VJudge 专用：没有备注校徽的队，用实时榜那份头像缓存当校徽。
+
+    用户 2026-10-27：滚榜里的校徽要和实时榜一致 —— 实时榜的优先级是
+    「备注校徽 → VJudge 头像 → 默认校徽」，而滚榜原来只看校徽目录，
+    于是备注过的有图、其他人全落默认校徽。这里把头像文件补进 team["logo"]
+    （match_team_logos 支持绝对路径），PTA 的数据不会走到这个函数。
+
+    头像位置：<程序根>\live\logos\<uid>.png（抓取器下的），也兼容 <程序根>\logos\<uid>.png。
+    """
+    try:
+        root = cfgmod.work_root()
+    except Exception:  # noqa: BLE001
+        return teams
+    cand_dirs = [Path(root) / "live" / "logos", Path(root) / "logos"]
+    out: list[dict[str, Any]] = []
+    for team in teams:
+        if not isinstance(team, dict):
+            continue
+        item = team
+        if not str(item.get("logo") or "").strip():
+            uid = str(item.get("userId") or "")
+            if uid:
+                for folder in cand_dirs:
+                    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+                        cand = folder / (uid + ext)
+                        try:
+                            if cand.is_file() and cand.stat().st_size > 0:
+                                item = dict(item)
+                                item["logo"] = str(cand)
+                                break
+                        except OSError:
+                            continue
+                    if str(item.get("logo") or "").strip():
+                        break
+        out.append(item)
+    return out
 
 
 def build_logo_plan(teams: list[dict[str, Any]], logos_dir: Path) -> dict[str, Any]:
@@ -1716,8 +1944,11 @@ def run_package(
                 logo_dir_error = f"校徽目录不存在：{logos_dir}"
             else:
                 try:
-                    logo_plan = build_logo_plan(contest.get("teams") or [],
-                                                Path(str(logos_dir)))
+                    logo_teams = contest.get("teams") or []
+                    if str(contest.get("source") or "").lower() == "vjudge":
+                        # VJudge：把「实时榜那套头像」当校徽喂进去（PTA 不动）
+                        logo_teams = vjudge_teams_with_avatar_logo(logo_teams)
+                    logo_plan = build_logo_plan(logo_teams, Path(str(logos_dir)))
                 except Exception as exc:  # noqa: BLE001
                     logo_dir_error = f"{type(exc).__name__}: {exc}"
         if logo_plan is not None:
@@ -1768,7 +1999,7 @@ def run_package(
                     names = "、".join(str(m.get("name")) for m in missed[:12])
                     more = "" if len(missed) <= 12 else f" 等 {len(missed)} 支"
                     print(f"     没配到照片：{names}{more}（这些队伍的比赛卡用默认背景）")
-                    print("     （文件名用学号最稳，例如 2026001.jpg；也可以直接用姓名 张三.jpg）")
+                    print("     （文件名用学号最稳，例如 26160358.jpg；也可以直接用姓名 汪章正.jpg）")
 
     # ---- 校徽（机构 logo）----
     logo_report: dict[str, Any] | None = None
@@ -1922,17 +2153,16 @@ def check_environment(root: Path) -> list[Check]:
     checks: list[Check] = []
 
     # 1. 项目根目录
-    core = cfgmod.core_dir()
-    need = [core / "pta_fetch.py", core / "pta_to_resolver_xml.py", core / "pta_common.py"]
+    need = [root / "pta_fetch.py", root / "pta_to_resolver_xml.py", root / "pta_common.py"]
     missing = [p.name for p in need if not p.is_file()]
     if missing:
         checks.append(Check(
-            "后端脚本", False, f"在 {core} 找不到 {', '.join(missing)}",
-            "本程序需要 core/ 下的 pta_fetch.py 等脚本。请从仓库根目录运行，"
+            "后端脚本", False, f"在 {root} 找不到 {', '.join(missing)}",
+            "本程序需要和 pta_fetch.py 等脚本在一起。请从项目根目录运行，"
             "或把打包后的整个文件夹完整解压（不要只拷 exe）。",
         ))
     else:
-        checks.append(Check("后端脚本", True, f"{core}（pta_fetch / pta_to_resolver_xml 已就位）"))
+        checks.append(Check("后端脚本", True, f"{root}（pta_fetch / pta_to_resolver_xml 已就位）"))
 
     # 2. Java
     java = shutil.which("java")

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""pta_assistant_gui.py —— ScoreDeck（合并版外壳：**两个模式各自独立**）。
+"""pta_assistant_gui.py —— PTA 比赛助手（合并版外壳：**两个模式各自独立**）。
 
 一个窗口、两种模式，但**页签完全分开**
 --------------------------------------
@@ -45,7 +45,7 @@ from pathlib import Path
 
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -61,7 +61,7 @@ BoardApp = base.BoardApp
 ToolTip = base.ToolTip
 _NavAdapter = base._NavAdapter
 
-APP_TITLE = "ScoreDeck — PTA 实时榜单 / 滚榜"
+APP_TITLE = "PTA 比赛助手（实时榜单 + 赛后滚榜）"
 
 # ---------------------------------------------------------------------------
 # 非交互模式的「一律不弹窗」开关
@@ -155,33 +155,41 @@ MODE_SHORT = {MODE_LIVE: "实时榜单", MODE_ROLL: "赛后滚榜"}
 LIVE_PAGE_DEFS = (
     # (idx, key, 标题, 一句话说明, 这页怎么用, 本模式内的显示序号)
     (0, "datasource", "数据源",
-     "实时榜单的全部输入：环境预检、题目集 ID、Cookie、端口",
-     "① 最上面点「开始检查」，确认这台机器能跑"
-     "　② 填题目集 ID（PTA 比赛网址里 /problem-sets/ 后面那串数字）"
-     "　③ 更新 Cookie（实时榜单必须有效 Cookie，否则取不到数）"
+     "实时榜单的全部输入：平台、环境预检、题目集 / 比赛 ID、Cookie、端口",
+     "① 最上面选平台（PTA / VJudge）并点「开始检查」，确认这台机器能跑"
+     "　② 填 ID（PTA = 题目集网址里 /problem-sets/ 后那串数字；VJudge = 862258 这种比赛 ID）"
+     "　③ PTA 必须更新 Cookie；VJudge 公开赛可留空"
      "　④ 点「4 服务」页的「启动」",
      1),
+    # ── VJudge 版第一步新增：队伍备注（建设顺序 idx=9，侧栏显示在「数据源」后面）──
+    (9, "teammemo", "队伍备注",
+     "给 VJudge 选手填真实姓名 / 校徽 / 备注，榜单上就显示备注名",
+     "① 先到「1 数据源」拉一次数据"
+     "　② 双击表格里的单元格改「备注姓名 / 校徽 / 备注」"
+     "　③ 改完点「重新拉取数据」或等下一轮轮询，榜单上就显示备注名"
+     "　（只有平台 = VJudge 时这一页可用）",
+     2),
     (1, "display", "外观",
      "榜单页长什么样：榜单页字体、13 题配色、奖项区块金/银/铜、校徽目录",
      "① 选榜单页字体（中文推荐 yahei）"
      "　② 13 个色块点一下就能改颜色"
      "　③ 奖项区块金/银/铜不用改也能用；奖项清单来自滚榜那边的奖项表"
      "　④ 校徽目录留空就用默认目录",
-     2),
+     3),
     (2, "service", "服务",
      "比赛中用：启动 / 停止实时榜单服务（就是给投屏看的那个网页）",
      "① 点「启动」　② 状态变成「运行中」后，去「直播」页复制网址"
      "　③ 比赛结束点「停止」",
-     3),
+     4),
     (3, "broadcast", "直播",
      "比赛中用：调榜单显示效果，把网址交给 OBS 或浏览器",
      "① 调榜单参数（一屏几行、要不要来回滚动）"
      "　② 点「复制 URL」　③ 粘到 OBS 的「浏览器」源里，或直接开浏览器",
-     4),
+     5),
     (4, "history", "历史",
      "只列「实时榜单」模式的运行记录（滚榜的记录在滚榜模式的历史页）",
      "双击某一行 = 载入那场比赛的题目集 ID",
-     5),
+     6),
 )
 
 ROLL_PAGE_DEFS = (
@@ -208,8 +216,10 @@ ROLL_PAGE_DEFS = (
      4),
 )
 
-#: 平表：下标 = 建设顺序；前 5 页属于实时榜单，后 4 页属于赛后滚榜。
-PAGE_DEFS = LIVE_PAGE_DEFS + ROLL_PAGE_DEFS
+#: 平表：**下标 = 建设顺序 = 页面 idx**。实时榜单 6 页（0..4 + 9 队伍备注），
+#: 赛后滚榜 4 页（5..8）。这里按 idx 排序，保证 ``PAGE_DEFS[idx]`` 取到的是
+#: 第 idx 页（侧栏顺序另由 ``MODE_PAGES`` 决定，见 LIVE_PAGE_DEFS 的排列顺序）。
+PAGE_DEFS = tuple(sorted(LIVE_PAGE_DEFS + ROLL_PAGE_DEFS, key=lambda item: item[0]))
 
 PAGES = tuple((key, title, sub) for _i, key, title, sub, _steps, _no in PAGE_DEFS)
 
@@ -723,23 +733,24 @@ class AssistantApp(BoardApp):
         self.content.bind("<Configure>",
                           lambda _e: self._show_page_only(self._nav_current), add="+")
 
-        # 9 个页面：建设顺序 = PAGE_DEFS 的顺序；容器只由 _show_page_only 摆
+        # 10 个页面：建设顺序 = PAGE_DEFS 的 idx；容器只由 _show_page_only 摆
         for idx in range(len(PAGE_DEFS)):
             self._page_frame(idx)
         self._page_frames = [f for f in self._page_frames if f is not None]
         assert len(self._page_frames) == len(PAGE_DEFS), len(self._page_frames)
 
         # 页面容器 → 语义属性名。
-        # 前 5 页是实时榜单那一套（tab_service / tab_live / tab_history_live …），
+        # 前 6 页是实时榜单那一套（数据源 / 队伍备注 / 外观 / 服务 / 直播 / 历史），
         # 后 4 页是赛后滚榜那一套 —— 基类的 _build_contest_tab / _build_play_tab /
         # _build_roll_tab / _build_history_tab 只认 tab_contest / tab_play /
         # tab_roll / tab_history，所以把后四个名字指给滚榜的页面：
         # 基类那些方法（历史载入 → tab_roll 等）就落在本模式的页上。
         self.tab_datasource_live = self._page_frames[0]  # 实时 · 1 数据源
-        self.tab_display_live = self._page_frames[1]     # 实时 · 2 外观
-        self.tab_service = self._page_frames[2]          # 实时 · 3 服务
-        self.tab_live = self._page_frames[3]             # 实时 · 4 直播
-        self.tab_history_live = self._page_frames[4]     # 实时 · 5 历史
+        self.tab_memo_live = self._page_frames[9]        # 实时 · 2 队伍备注（VJudge）
+        self.tab_display_live = self._page_frames[1]     # 实时 · 3 外观
+        self.tab_service = self._page_frames[2]          # 实时 · 4 服务
+        self.tab_live = self._page_frames[3]             # 实时 · 5 直播
+        self.tab_history_live = self._page_frames[4]     # 实时 · 6 历史
         # 注意：``tab_contest`` 是**基类** ``_build_contest_tab`` 认的名字，
         # 它会被画到「滚榜 · 1 数据源」上，所以这里必须指第 5 页 ——
         # 指错了就会把滚榜的第一张卡画进实时模式的页里（实测踩过）。
@@ -758,12 +769,13 @@ class AssistantApp(BoardApp):
             7: self._build_roll_roll_tab,
             8: self._build_roll_history_tab,
             0: self._build_live_datasource_tab,
+            9: self._build_live_memo_tab,
             1: self._build_live_display_tab,
             2: self._build_service_tab,
             3: self._build_live_tab,
             4: self._build_live_history_tab,
         }
-        for idx in (5, 6, 7, 8, 0, 1, 2, 3, 4):
+        for idx in (5, 6, 7, 8, 0, 1, 2, 3, 4, 9):
             self._builders[idx]()
         self._build_roll_banner()
 
@@ -1113,7 +1125,7 @@ class AssistantApp(BoardApp):
         if self._mode_hint is not None:
             # 侧栏只有 190px 宽，这行提示必须短 —— 太长会挤掉最下面的页签。
             if self.mode == MODE_LIVE:
-                text = "比赛中：先「3 服务」启动，再「4 直播」复制网址"
+                text = "比赛中：先「4 服务」启动，再「5 直播」复制网址"
             else:
                 text = "赛后：先「1 数据源」拉数据，再「3 滚榜」开始"
             self._mode_hint.configure(text=text)
@@ -1127,10 +1139,12 @@ class AssistantApp(BoardApp):
         if self._shot_only:
             return
         if self.mode == MODE_ROLL:
+            # 用户 2026-10-24：切到「赛后滚榜」**不能再停掉实时服务** ——
+            #   直播中切过去一次，榜单页就直接断线（浏览器不停重连、画面停住）。
+            #   滚榜是本地生成比赛包 + 播放 Resolver，用不到榜单页那个端口。
             if self.service.any_running():
-                info = self.service.stop()
-                self._log("[模式] 已停止实时服务，避免端口占用："
-                          + "；".join(info.get("notes") or []) + "\n")
+                port = self.live_cfg.get("port") or live.DEFAULT_PORT
+                self._log(f"[模式] 实时服务保持运行（端口 {port}）—— 滚榜不影响榜单页\n")
             self._refresh_roll_banner()
         else:
             self._refresh_live_page()
@@ -1176,14 +1190,17 @@ class AssistantApp(BoardApp):
     # == 实时榜单 · 1 数据源 ============================================
 
     def _build_live_datasource_tab(self) -> None:
-        """实时榜单模式第 1 页：题目集 ID / Cookie / 从哪里取数 / 端口 / 环境预检。
+        """实时榜单模式第 1 页：平台 / 题目集（比赛）ID / Cookie / 端口 / 环境预检。
 
         这一页**只放实时榜单要用的东西** —— 比赛数据包、播放方式、Resolver、
         Esc 那些滚榜的事都在滚榜模式自己的页里，不在这出现。
         """
         page = self.tab_datasource_live
 
-        # ✅ 环境预检卡**放在这一页最上面**（不许藏在折叠/二级入口里）：
+        # 「平台」放在**这一页最上面**：先选 PTA / VJudge，下面所有东西才谈得上。
+        self._build_platform_card(page)
+
+        # ✅ 环境预检卡**放在平台下面**（不许藏在折叠/二级入口里）：
         #    有 ❌ 时还会在步骤带下面弹出醒目红横幅。
         self._build_precheck_card(page)
 
@@ -1191,15 +1208,17 @@ class AssistantApp(BoardApp):
                           "实时榜单每隔一会儿就去取一次新提交；这里决定「取哪一场」「多久取一次」")
 
         row = self._form_row(body, "题目集 ID")
+        # 平台选 VJudge 时这一行的标签 / 提示会换成「VJudge 比赛 ID」（见 _refresh_platform_ui）
+        self.psid_label_live = row.winfo_children()[0]
         self.psid_entry_live = self._entry(row, self.psid_var, 28)
         self.psid_entry_live.pack(side="left")
         self.psid_entry_live.bind("<KeyRelease>", lambda _e: self._psid_msg())
-        ToolTip(self.psid_entry_live,
-                "要比哪一场比赛，就填哪一场的题目集 ID。\n"
-                "在浏览器打开这场比赛，地址栏里 /problem-sets/ 后面那串数字就是它，\n"
-                "例如 2100000000000000000。\n"
-                "这个输入框和「赛后滚榜」那边的题目集 ID 是同一个值：\n"
-                "改这边那边也跟着变，只保存一份到设置文件里。")
+        self.psid_tip_live = ToolTip(self.psid_entry_live,
+                                     "要比哪一场比赛，就填哪一场的题目集 ID。\n"
+                                     "在浏览器打开这场比赛，地址栏里 /problem-sets/ 后面那串数字就是它，\n"
+                                     "例如 2107050785530253312。\n"
+                                     "这个输入框和「赛后滚榜」那边的题目集 ID 是同一个值：\n"
+                                     "改这边那边也跟着变，只保存一份到设置文件里。")
         self.live_fetch_btn = self._ghost_btn(row, "重新拉取数据", self.on_fetch)
         self.live_fetch_btn.pack(side="left", padx=(10, 0))
         ToolTip(self.live_fetch_btn,
@@ -1243,12 +1262,597 @@ class AssistantApp(BoardApp):
         self.port_state = self._pill(row, "", "hint")
         self.port_state.pack(side="left", padx=8)
 
+        # 用户 2026-10-24：滚榜页的「封榜时长」也在实时榜单里放一份，方便比赛中改。
+        row = self._form_row(body, "封榜时长（分钟）")
+        freeze_now = self.live_cfg.get("freeze_minutes")
+        if freeze_now in (None, ""):
+            freeze_now = self.cfg.get("freeze_minutes", 60)
+        self.freeze_live_var = tk.StringVar(value=str(freeze_now))
+        freeze_live_entry = self._entry(row, self.freeze_live_var, 7)
+        freeze_live_entry.pack(side="left")
+        ToolTip(freeze_live_entry,
+                "比赛最后这么久不公开榜单（封榜）。和「滚榜」页共用同一份值，"
+                "改完下一轮轮询就生效，不用重启服务；0 = 不封榜。")
+        self._hint(row, "和滚榜页共用一份值；留空 = 用比赛自带的封榜时长；0 = 不封榜",
+                   size=9).pack(side="left", fill="x", expand=True, padx=6)
+        for ev in ("<FocusOut>", "<Return>"):
+            try:
+                freeze_live_entry.bind(ev, lambda _e=None: self._push_live_freeze())
+            except Exception:  # noqa: BLE001
+                pass
+
         row = self._indent_row(body)
         self.live_action_hint = self._hint(row, "")
         self.live_action_hint.pack(side="left", fill="x", expand=True)
 
         self._refresh_cookie_pill()
         self._refresh_port_pill()
+        self._refresh_platform_ui()
+
+    # == 实时榜单 · 1 数据源 · 平台（PTA / VJudge） ======================
+
+    #: 下拉框显示的文字 -> 配置里的值
+    PLATFORM_LABELS = {"PTA（拼题 A）": "pta", "VJudge": "vjudge"}
+    #: VJudge 默认 10 秒轮询（任务要求）；PTA 保持原来的 5 秒
+    VJUDGE_DEFAULT_INTERVAL = 10
+
+    def _build_platform_card(self, page) -> None:
+        """「平台」下拉：放在数据源页**最上面**（先选平台，下面才谈得上填什么）。"""
+        body = self._card(page, "平台",
+                          "这场比赛的取数来源：PTA（拼题 A）或 VJudge；"
+                          "选完下面的 ID / Cookie / 轮询都会跟着变")
+
+        current = str(self.cfg.get("platform") or "pta").strip().lower()
+        label = "VJudge" if current == "vjudge" else "PTA（拼题 A）"
+        self.platform_var = tk.StringVar(value=label)
+        row = self._form_row(body, "平台")
+        self.platform_combo = ttk.Combobox(row, textvariable=self.platform_var,
+                                           state="readonly", width=16,
+                                           values=list(self.PLATFORM_LABELS.keys()))
+        self.platform_combo.pack(side="left")
+        self.platform_combo.bind("<<ComboboxSelected>>",
+                                 lambda _e: self._on_platform_change())
+        ToolTip(self.platform_combo,
+                "PTA（拼题 A）：原来的取数方式，需要有效 Cookie（JSESSIONID + PTASession）。\n"
+                "VJudge：公开比赛匿名取数，不需要 Cookie；拿不到封榜/题名，"
+                "真实姓名用「队伍备注」页维护。")
+        self.platform_state = self._pill(row, "", "hint")
+        self.platform_state.pack(side="left", padx=10)
+        row = self._indent_row(body)
+        self.platform_hint = self._hint(row, "")
+        self.platform_hint.pack(side="left", fill="x", expand=True)
+
+    def _platform(self) -> str:
+        """当前平台（``pta`` / ``vjudge``）。"""
+        try:
+            label = str(self.platform_var.get())
+        except Exception:  # noqa: BLE001
+            label = ""
+        return self.PLATFORM_LABELS.get(label, "pta")
+
+    def _on_platform_change(self) -> None:
+        """切平台：存配置、换标签/提示、VJudge 时给 10 秒轮询、刷新备注页可用性。"""
+        platform = self._platform()
+        self.cfg["platform"] = platform
+        self.live_cfg["platform"] = platform
+        # VJudge 默认 10 秒（任务要求）；切回 PTA 不强行改用户已填的间隔
+        if platform == "vjudge":
+            try:
+                current = int(float(str(self.interval_var.get()).strip()))
+            except (AttributeError, ValueError):
+                current = 0
+            if current <= 5:
+                try:
+                    self.interval_var.set(str(self.VJUDGE_DEFAULT_INTERVAL))
+                except Exception:  # noqa: BLE001
+                    pass
+                self.live_cfg["poll_interval"] = self.VJUDGE_DEFAULT_INTERVAL
+        self._refresh_platform_ui()
+        self._refresh_cookie_pill()
+        self._sync_memo_page()
+        self._push_live_platform(platform)
+        try:
+            self._persist()
+        except Exception:  # noqa: BLE001
+            pass
+        self._set_status("平台已切到 " + ("VJudge" if platform == "vjudge" else "PTA")
+                         + "（改完点「重新拉取数据」或「启动」生效）")
+
+    def _refresh_platform_ui(self) -> None:
+        """按平台更新：ID 那一行的标签 / 提示、取数方式说明、平台药丸。"""
+        if not hasattr(self, "platform_var"):
+            return
+        platform = self._platform()
+        vj = platform == "vjudge"
+        if hasattr(self, "platform_state"):
+            self._set_pill(self.platform_state, "VJudge（公开榜）" if vj else "PTA",
+                           "ok" if vj else "hint")
+        if hasattr(self, "platform_hint"):
+            self.platform_hint.configure(
+                text=("VJudge：公开比赛匿名取数，不需要 Cookie；轮询默认 10 秒。"
+                      "拿不到封榜设置与题目标题（题目用 A/B/… 代替），"
+                      "真实姓名 / 校徽到「队伍备注」页维护 —— 榜单会显示备注名。"
+                      if vj else
+                      "PTA（拼题 A）：用题目集 ID + 有效 Cookie 取数，轮询默认 5 秒。"),
+                fg=self.C["hint"])
+        if hasattr(self, "psid_label_live"):
+            try:
+                self.psid_label_live.configure(text="VJudge 比赛 ID" if vj else "题目集 ID")
+            except Exception:  # noqa: BLE001
+                pass
+        if hasattr(self, "channel_hint"):
+            self.channel_hint.configure(
+                text=("VJudge：直连 https://vjudge.net/contest/rank/single/<比赛ID>，"
+                      "匿名 GET、不需要 Cookie。"
+                      if vj else CHANNEL_HELP),
+                fg=self.C["hint"])
+        if hasattr(self, "psid_hint_live"):
+            self.psid_hint_live.configure(
+                text=("VJudge 比赛 ID：填 862258 这种数字，或直接粘 "
+                      "https://vjudge.net/contest/862258#rank （粘网址也行，会自动抽出 ID）"
+                      if vj else "题目集 ID：PTA 比赛网址里 /problem-sets/ 后面那串数字，"
+                                "例如 2107050785530253312"),
+                fg=self.C["hint"])
+
+    def _push_live_platform(self, platform: str | None = None) -> None:
+        """把 platform / contest_id 立刻写进实时运行目录，poller 下一轮就能读到。"""
+        platform = platform or self._platform()
+        try:
+            run = live.run_dir(cfgmod.work_root())
+            live.update_live_view(run, None, {
+                "platform": platform,
+                "contest_id": str(self.cfg.get("problem_set_id") or "").strip(),
+            })
+        except Exception:  # noqa: BLE001 - 写不进去也不影响界面（启动服务时会写）
+            pass
+
+    def _push_live_freeze(self) -> None:
+        """把「封榜时长」写进主配置 + 实时运行目录（下一轮轮询生效，不用重启）。
+
+        用户 2026-10-24：这份值滚榜页和实时榜单页**共用**（同一份 config.json），
+        所以这里顺手把滚榜页那个输入框也改成同一个数，避免两边显示不一致。
+        """
+        raw = ""
+        try:
+            raw = str(self.freeze_live_var.get()).strip()
+        except Exception:  # noqa: BLE001
+            return
+        value = None
+        if raw != "":
+            try:
+                value = max(0, int(float(raw)))
+            except ValueError:
+                value = None
+        self.live_cfg["freeze_minutes"] = value
+        if value is not None:
+            self.cfg["freeze_minutes"] = value
+            try:
+                self.freeze_var.set(str(value))        # 滚榜页显示同一份值
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            self._persist()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            run = live.run_dir(cfgmod.work_root())
+            live.update_live_view(run, None, {"freeze_minutes": value})
+            self._set_status("封榜时长：%s（下一轮轮询生效）"
+                             % ("留空 = 用比赛自带" if value is None else str(value) + " 分钟"))
+        except Exception:  # noqa: BLE001
+            self._set_status("封榜时长已保存（实时运行目录暂时没写进去，起服务时会补）")
+
+    # == 实时榜单 · 2 队伍备注（VJudge 专用） ============================
+
+    #: 表格列：(键, 表头, 宽度, 是否可编辑)
+    MEMO_COLUMNS = (
+        ("handle", "handle（原始账号）", 18, False),
+        ("display", "备注姓名", 18, True),
+        # 用户 2026-10-27：第三列「备注」多余，去掉；校徽列的表头写清楚怎么填
+        ("logo", "校徽（留空=按备注姓名自动匹配）", 26, True),
+    )
+
+    def _alias_module(self):
+        """导入备注库模块（同目录 / 程序根那份 vjudge_alias.py）。"""
+        root = cfgmod.resource_root()
+        for entry in (str(root), str(Path(root).parent / "pta-resolver"), str(Path(root) / "app")):
+            try:
+                if Path(entry).is_dir() and entry not in sys.path:
+                    sys.path.insert(0, entry)
+            except OSError:
+                continue
+        import vjudge_alias  # noqa: E402
+        return vjudge_alias
+
+    def _alias_db(self) -> Path:
+        """备注库路径：``<程序根>\\vjudge-aliases.db``（和 poller 抓取时用的同一份）。"""
+        return cfgmod.work_root() / "vjudge-aliases.db"
+
+    def _build_live_memo_tab(self) -> None:
+        """「队伍备注」页：从最近一次抓到的 contest.json 读 VJudge 选手，双击改备注。"""
+        page = self.tab_memo_live
+        self._memo_rows = []
+        self._memo_row_map = {}
+        self._memo_widgets = []
+        self._memo_loaded = False
+
+        body = self._card(
+            page, "队伍备注（VJudge 专用）",
+            "VJudge 只给 handle，没有学号和真实姓名。这里给每支队填「备注姓名 / 校徽 / 备注」，"
+            "抓取时自动用备注名当队名 —— 榜单上就显示真实姓名")
+
+        row = self._form_row(body, "数据来源")
+        self.memo_source = self._hint(row, "还没有读取比赛数据")
+        self.memo_source.pack(side="left", fill="x", expand=True)
+
+        row = self._form_row(body, "操作")
+        self.memo_reload_btn = self._ghost_btn(row, "重新读取选手列表", self._memo_reload)
+        self.memo_reload_btn.pack(side="left")
+        ToolTip(self.memo_reload_btn,
+                "从最近一次抓到的 contest.json 重新读一遍 participants。\n"
+                "刚拉完数据、或者比赛里又进了新选手时点一下。")
+        self.memo_logo_btn = self._ghost_btn(row, "选择校徽图片…", self._memo_pick_logo)
+        self.memo_logo_btn.pack(side="left", padx=(8, 0))
+        ToolTip(self.memo_logo_btn,
+                "先双击某行的「校徽」格，再点这里选一张图。\n"
+                "图片会被复制到 <程序根>\\校徽\\<备注姓名>.png，并把文件名填进那一格。\n"
+                "（留空 = 按备注姓名自动匹配 校徽\\ 目录里的同名图片）")
+        self.memo_state = self._pill(row, "", "hint")
+        self.memo_state.pack(side="left", padx=10)
+        self._memo_widgets += [self.memo_reload_btn, self.memo_logo_btn]
+
+        row = self._indent_row(body)
+        hint = self._hint(
+            row, "双击「备注姓名 / 校徽 / 备注」单元格即可编辑，改完按回车（或点别处）自动写入 "
+                 f"{self._alias_db()}。榜单上显示备注名要等**下一次抓取**："
+                 "点「1 数据源」页的「重新拉取数据」，或等下一轮轮询。")
+        hint.pack(side="left", fill="x", expand=True)
+        self._memo_hint_row = row
+
+        # ---- 表格（放在一个固定高度的可滚动区域里，选手多了也不会把页面撑爆）----
+        wrap = self._f(body)
+        wrap.pack(fill="both", expand=True, padx=12, pady=(4, 6))
+        canvas = tk.Canvas(wrap, height=260, bg=self.C["card"], highlightthickness=0, bd=0)
+        bar = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        self.memo_table = self._f(canvas, bg=self.C["card"])
+        window_id = canvas.create_window((0, 0), window=self.memo_table, anchor="nw")
+
+        def _on_cfg(_e=None):
+            try:
+                canvas.configure(scrollregion=canvas.bbox("all"))
+                canvas.itemconfigure(window_id, width=max(canvas.winfo_width(), 640))
+            except Exception:  # noqa: BLE001
+                pass
+
+        self.memo_table.bind("<Configure>", _on_cfg)
+        canvas.bind("<Configure>", _on_cfg)
+        self._memo_canvas = canvas
+
+        # 表头
+        for col, (key, title, width, _edit) in enumerate(self.MEMO_COLUMNS):
+            lbl = tk.Label(self.memo_table, text=title, bg="#eef2f7",
+                           fg=self.C["sub"], font=(UI_FONT, 9, "bold"),
+                           anchor="w", padx=6, pady=4, width=width)
+            lbl.grid(row=0, column=col, sticky="nsew", padx=(0, 1), pady=(0, 2))
+        self._memo_header = 1
+
+        for col in range(len(self.MEMO_COLUMNS)):
+            self.memo_table.grid_columnconfigure(col, weight=1)
+
+        footer = self._hint(body, "改完点「重新拉取数据」或等下一轮轮询，榜单上就显示备注名。")
+        footer.pack(anchor="w", fill="x", padx=14, pady=(0, 8))
+
+        self._sync_memo_page()
+
+    # ---- 队伍备注：读 / 写 / 可用性 ------------------------------------
+
+    def _memo_contest_candidates(self) -> list[Path]:
+        """按优先级列出「最近一次抓到的 contest.json」候选路径。"""
+        root = cfgmod.work_root()
+        cands = []
+        try:
+            cands.append(live.run_dir(root) / "contest.json")   # 实时运行目录（poller 写的）
+        except Exception:  # noqa: BLE001
+            pass
+        cands.append(root / "contest.json")                     # 滚榜 / 手动拉的那份
+        last = str(self.cfg.get("last_contest_json") or "").strip()
+        if last:
+            cands.append(Path(last))
+        out: list[Path] = []
+        for path in cands:
+            try:
+                if path.is_file() and path not in out:
+                    out.append(path)
+            except OSError:
+                continue
+        return out
+
+    def _memo_read_teams(self) -> tuple[list[dict], Path | None]:
+        """读出一份带 teams 的 contest.json；没有就返回 ([], None)。"""
+        for path in self._memo_contest_candidates():
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            teams = data.get("teams") if isinstance(data, dict) else None
+            if isinstance(teams, list) and teams:
+                return teams, path
+        return [], None
+
+    def _memo_clear_rows(self) -> None:
+        for widget in getattr(self, "_memo_rows", []):
+            try:
+                widget.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+        self._memo_rows = []
+        self._memo_row_map = {}
+
+    def _memo_reload(self) -> None:
+        """重新从 contest.json 读选手列表并重建表格。"""
+        if not hasattr(self, "memo_table"):
+            return
+        self._memo_clear_rows()
+        teams, path = self._memo_read_teams()
+        if not teams:
+            self.memo_source.configure(
+                text="还没找到带队伍的比赛数据 —— 先到「1 数据源」页点「拉取数据」（或「启动」让轮询跑一轮）。",
+                fg=self.C["warn"])
+            self._set_pill(self.memo_state, "没有数据", "warn")
+            self._memo_loaded = False
+            return
+        try:
+            alias_mod = self._alias_module()
+            db = self._alias_db()
+            aliases = {str(r.get("vjudge_uid")): r for r in alias_mod.list_rows(db)}
+        except Exception as exc:  # noqa: BLE001 - 备注库坏了也要能看到选手列表
+            alias_mod, aliases, db = None, {}, self._alias_db()
+            self._log(f"[备注] 备注库读取失败（{type(exc).__name__}: {exc}），先只显示 handle\n")
+        editable = self._platform() == "vjudge"
+        for idx, team in enumerate(teams, start=1):
+            uid = str(team.get("userId") or "").strip()
+            if not uid:
+                continue
+            handle = str(team.get("vjudge_handle") or team.get("name") or uid)
+            saved = aliases.get(uid) or {}
+            values = {"handle": handle,
+                      "display": str(saved.get("display") or ""),
+                      "logo": str(saved.get("logo") or ""),
+                      "note": str(saved.get("note") or "")}
+            row_entries: dict[str, tk.Widget] = {}
+            for col, (key, _title, width, is_edit) in enumerate(self.MEMO_COLUMNS):
+                if key == "handle" or not is_edit:
+                    widget = tk.Label(self.memo_table, text=values[key], bg=self.C["card"],
+                                      fg=self.C["ink"], font=(UI_FONT, 9),
+                                      anchor="w", padx=6, pady=2)
+                    widget.grid(row=idx, column=col, sticky="nsew", padx=(0, 1), pady=1)
+                    row_entries[key] = widget
+                    continue
+                entry = tk.Entry(self.memo_table, width=width, font=(UI_FONT, 9),
+                                 relief="flat", bd=0, bg="#f7f9fc", fg=self.C["ink"],
+                                 highlightthickness=1, highlightbackground="#d7dee8",
+                                 state="normal", readonlybackground="#f7f9fc")
+                entry.insert(0, values[key])
+                # 先 normal 再 readonly：readonly 的 Entry 上 insert/delete 是**静默失效**的
+                # （实测：直接建 readonly 会一个字都填不进去）
+                entry.configure(state="readonly")
+                entry.grid(row=idx, column=col, sticky="nsew", padx=(0, 1), pady=1)
+                entry.bind("<Double-1>", lambda _e, u=uid, k=key: self._memo_edit_cell(u, k))
+                entry.bind("<Return>", lambda _e, u=uid: self._memo_commit(u))
+                entry.bind("<FocusOut>", lambda _e, u=uid: self._memo_commit(u))
+                # 用户 2026-10-27：只读单元格里 Ctrl+V 会被 Tk 直接吃掉（静默失败）。
+                # 这里显式接管：先切换到可编辑、再执行粘贴，并且给一个右键菜单。
+                entry.bind("<Control-v>", lambda _e, u=uid, k=key: self._memo_paste(u, k))
+                entry.bind("<Control-V>", lambda _e, u=uid, k=key: self._memo_paste(u, k))
+                entry.bind("<Shift-Insert>", lambda _e, u=uid, k=key: self._memo_paste(u, k))
+                entry.bind("<Button-3>", lambda e, u=uid, k=key: self._memo_menu(e, u, k))
+                row_entries[key] = entry
+            self._memo_rows.append(self.memo_table.grid_slaves(row=idx))
+            self._memo_row_map[uid] = {"handle": handle, "entries": row_entries}
+        self._memo_loaded = True
+        self.memo_source.configure(
+            text=f"读取到 {len(self._memo_row_map)} 名选手：{path}（双击单元格编辑）",
+            fg=self.C["hint"])
+        self._set_pill(self.memo_state, "可用" if editable else "只在 VJudge 平台可用",
+                       "ok" if editable else "warn")
+        self._sync_memo_page(rebuild=False)
+
+    def _memo_edit_cell(self, uid: str, key: str) -> None:
+        """双击单元格：变成可编辑并聚焦。"""
+        if self._platform() != "vjudge":
+            self._set_pill(self.memo_state, "只在 VJudge 平台可用", "warn")
+            return
+        row = getattr(self, "_memo_row_map", {}).get(uid)
+        if not row:
+            return
+        entry = row["entries"].get(key)
+        if entry is None:
+            return
+        try:
+            entry.configure(state="normal", bg="white")
+            entry.focus_set()
+            entry.select_range(0, "end")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _memo_paste(self, uid: str, key: str) -> str:
+        """Ctrl+V / Shift+Insert：先把单元格切到可编辑，再真正粘贴。"""
+        if self._platform() != "vjudge":
+            return "break"
+        self._memo_edit_cell(uid, key)
+        row = getattr(self, "_memo_row_map", {}).get(uid) or {}
+        entry = (row.get("entries") or {}).get(key)
+        if entry is None:
+            return "break"
+        try:
+            entry.event_generate("<<Paste>>")
+        except Exception:  # noqa: BLE001
+            try:
+                entry.insert("insert", self.clipboard_get())
+            except Exception:  # noqa: BLE001
+                pass
+        return "break"
+
+    def _memo_menu(self, event, uid: str, key: str) -> None:
+        """右键菜单：粘贴 / 复制 / 剪切 / 清空（都会先把格子切成可编辑）。"""
+        row = getattr(self, "_memo_row_map", {}).get(uid) or {}
+        entry = (row.get("entries") or {}).get(key)
+        if entry is None:
+            return
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="粘贴（Ctrl+V）", command=lambda: self._memo_paste(uid, key))
+        menu.add_separator()
+        menu.add_command(label="复制", command=lambda: self._memo_clip(entry, copy=True))
+        menu.add_command(label="剪切", command=lambda: self._memo_clip(entry, copy=False))
+        menu.add_command(label="清空这一格", command=lambda: self._memo_clear_cell(uid, key))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _memo_clip(self, entry, copy: bool) -> None:
+        try:
+            text = entry.selection_get()
+        except Exception:  # noqa: BLE001
+            text = entry.get()
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+        except Exception:  # noqa: BLE001
+            pass
+        if not copy:
+            try:
+                entry.configure(state="normal", bg="white")
+                entry.focus_set()
+                entry.delete("sel.first", "sel.last")
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _memo_clear_cell(self, uid: str, key: str) -> None:
+        row = getattr(self, "_memo_row_map", {}).get(uid) or {}
+        entry = (row.get("entries") or {}).get(key)
+        if entry is None:
+            return
+        try:
+            entry.configure(state="normal", bg="white")
+            entry.delete(0, "end")
+        except Exception:  # noqa: BLE001
+            pass
+        self._memo_commit(uid)
+
+    def _memo_pick_logo(self) -> None:
+        """选中某行的「校徽」格 → 选一张图 → 自动复制进 校徽\\ 目录并填好文件名。"""
+        if self._platform() != "vjudge":
+            self._set_pill(self.memo_state, "只在 VJudge 平台可用", "warn")
+            return
+        target = None
+        for uid, row in (getattr(self, "_memo_row_map", {}) or {}).items():
+            entry = (row.get("entries") or {}).get("logo")
+            try:
+                if entry is not None and entry.focus_get() is entry:
+                    target = (uid, row, entry)
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        if target is None:
+            self._set_pill(self.memo_state, "先双击某行的校徽格", "warn")
+            return
+        uid, row, entry = target
+        path = filedialog.askopenfilename(
+            title="选一张校徽图片（建议 128x128 PNG）",
+            filetypes=[("图片", "*.png *.jpg *.jpeg *.webp *.bmp"), ("所有文件", "*.*")])
+        if not path:
+            return
+        src = Path(path)
+        display = ""
+        try:
+            display = str((row.get("entries") or {}).get("display").get()).strip()
+        except Exception:  # noqa: BLE001
+            display = ""
+        name_src = display or row.get("handle") or uid
+        safe = "".join(ch for ch in name_src if ch not in '\\/:*?"<>|').strip() or uid
+        logo_dir = cfgmod.work_root() / "校徽"
+        try:
+            logo_dir.mkdir(parents=True, exist_ok=True)
+            dest = logo_dir / (safe + src.suffix.lower())
+            dest.write_bytes(src.read_bytes())
+        except Exception as exc:  # noqa: BLE001
+            self._set_pill(self.memo_state, f"复制图片失败：{type(exc).__name__}", "err")
+            return
+        try:
+            entry.configure(state="normal", bg="white")
+            entry.delete(0, "end")
+            entry.insert(0, dest.name)
+        except Exception:  # noqa: BLE001
+            pass
+        self._memo_commit(uid)
+        self._set_status(f"校徽已设置：{dest.name}（已复制到 {logo_dir}）")
+    def _memo_commit(self, uid: str) -> None:
+        """把这一行当前的值写进 SQLite 备注库（回车 / 失焦触发）。"""
+        row = getattr(self, "_memo_row_map", {}).get(uid)
+        if not row:
+            return
+        entries = row["entries"]
+        try:
+            display = str(entries["display"].get()).strip()
+            logo = str(entries["logo"].get()).strip()
+            note_entry = entries.get("note")
+            note = str(note_entry.get()).strip() if note_entry is not None else ""
+        except Exception:  # noqa: BLE001
+            return
+        for key in ("display", "logo", "note"):
+            try:
+                entries[key].configure(state="readonly", bg="#f7f9fc")
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            alias_mod = self._alias_module()
+            alias_mod.set_alias(self._alias_db(), uid, row["handle"], display, logo, note)
+        except Exception as exc:  # noqa: BLE001
+            self._set_pill(self.memo_state, "保存失败", "err")
+            self._log(f"[备注] 写入失败（uid={uid}）：{type(exc).__name__}: {exc}\n")
+            return
+        self._set_pill(self.memo_state, "已保存", "ok")
+        self._set_status(f"备注已保存：{row['handle']}"
+                         + (f" → {display}" if display else "（未填备注名 = 显示 handle）"))
+        self._log(f"[备注] 已保存 uid={uid} handle={row['handle']} "
+                  f"display={display!r} logo={logo!r}\n")
+
+    def _sync_memo_page(self, rebuild: bool = True) -> None:
+        """按平台决定这一页可用 / 置灰，并在 VJudge 时自动读一次列表。"""
+        if not hasattr(self, "memo_table"):
+            return
+        vjudge = (self._platform() == "vjudge")
+        for widget in getattr(self, "_memo_widgets", []):
+            try:
+                widget.configure(state="normal" if vjudge else "disabled")
+            except Exception:  # noqa: BLE001
+                pass
+        if not vjudge:
+            self.memo_source.configure(
+                text=("当前平台是 PTA（拼题 A）：PTA 有学号和真实姓名，不需要备注页。"
+                      "把「平台」切到 VJudge 后这一页才可用。"),
+                fg=self.C["hint"])
+            self._set_pill(self.memo_state, "只在 VJudge 平台可用", "warn")
+            for row in getattr(self, "_memo_row_map", {}).values():
+                for key in ("display", "logo", "note"):
+                    try:
+                        row["entries"][key].configure(state="disabled")
+                    except Exception:  # noqa: BLE001
+                        pass
+            return
+        for row in getattr(self, "_memo_row_map", {}).values():
+            for key in ("display", "logo", "note"):
+                try:
+                    row["entries"][key].configure(state="readonly", bg="#f7f9fc")
+                except Exception:  # noqa: BLE001
+                    pass
+        if rebuild and not getattr(self, "_memo_loaded", False):
+            self._memo_reload()
 
     # == 实时榜单 · 1 数据源 · 环境预检 ==================================
 
@@ -1344,10 +1948,20 @@ class AssistantApp(BoardApp):
     def _refresh_cookie_pill(self) -> None:
         """Cookie 状态药丸 + 就地提示。
 
-        2026-10-13：Cookie 是**必需**的（没有「借用浏览器」这条路了）。缺失/缺字段时
-        用红字显著提示 + 「去更新 Cookie」的两条做法。
+        2026-10-13：PTA 下 Cookie 是**必需**的（没有「借用浏览器」这条路了）。
+        VJudge 公开赛**不需要 Cookie** —— 这里显示「可留空」，不再报红。
         """
         if not self._cookie_widgets:
+            return
+        if getattr(self, "platform_var", None) is not None and self._platform() == "vjudge":
+            for entry in self._cookie_widgets.values():
+                self._set_pill(entry["pill"], "VJudge 公开赛可留空", "ok")
+                entry["hint"].configure(
+                    text=("VJudge 公开比赛匿名取数，**不需要 Cookie**（可以留空）。"
+                          "只有私有 / 需要登录的比赛才要填：浏览器登录 vjudge.net 后"
+                          "F12 → Network 复制 Cookie 粘到这里（本版本没有做密码赛登录）。"),
+                    fg=self.C["hint"])
+            self._fit_all_hints()
             return
         ok, note = live.cookie_status(cfgmod.work_root())
         problem = live.cookie_problem(cfgmod.work_root())
@@ -1389,8 +2003,8 @@ class AssistantApp(BoardApp):
             self._set_pill(self.port_state, f"{port} 被占用", "err")
             self._msg_hint_live(
                 f"端口 {port} 被别的程序占用了（PID {pids}）。怎么办，二选一："
-                f"① 到「3 服务」页点「终止旧服务」把上次没关干净的服务收掉；"
-                f"② 或者把上面这个端口号改成一个没被占用的（点「3 服务」页的「换一个空闲端口」）。"
+                f"① 到「4 服务」页点「终止旧服务」把上次没关干净的服务收掉；"
+                f"② 或者把上面这个端口号改成一个没被占用的（点「4 服务」页的「换一个空闲端口」）。"
                 f"本程序不会偷偷帮你杀进程。")
         elif in_use:
             self._set_pill(self.port_state, f"{port} 运行中", "ok")
@@ -1401,20 +2015,30 @@ class AssistantApp(BoardApp):
 
     def _msg_hint_live(self, text: str, kind: str = "hint") -> None:
         if not text:
-            text = ("实时榜单服务还没启动。点「3 服务」页的「启动」以后，榜单页就在 "
+            text = ("实时榜单服务还没启动。点「4 服务」页的「启动」以后，榜单页就在 "
                     f"http://127.0.0.1:{self.port_var.get()}/board"
-                    "（投屏/OBS 用「4 直播」页那个带参数的网址）。")
+                    "（投屏/OBS 用「5 直播」页那个带参数的网址）。")
         self.live_action_hint.configure(text=text, fg=self.KIND[kind])
         self._fit_all_hints()
 
     def _psid_msg(self, text: str | None = None, error: bool = False) -> None:
-        """题目集 ID 的就地反馈（两个模式各有一个输入框，同一套提示）。"""
+        """题目集 / VJudge 比赛 ID 的就地反馈（两个模式各有一个输入框，同一套提示）。
+
+        ``BoardApp._psid_msg`` 用 psid_hint 的文案，这里再同步到实时页的
+        ``psid_hint_live``；平台 = VJudge 时换成 VJudge 口径（粘网址也行）。
+        """
         BoardApp._psid_msg(self, text, error)
         hint = getattr(self, "psid_hint_live", None)
         if hint is not None:
             src = getattr(self, "psid_hint", None)
             if src is not None:
                 hint.configure(text=src.cget("text"), fg=src.cget("fg"))
+        if text is None and self._platform() == "vjudge" and hint is not None:
+            hint.configure(
+                text=("VJudge 比赛 ID：填 862258 这种数字，或直接粘 "
+                      "https://vjudge.net/contest/862258#rank（粘网址也行，会自动抽出 ID）"),
+                fg=self.C["hint"])
+        self._sync_fetch_buttons()
 
     # == 实时榜单 · 2 外观：榜单页字体 / 配色 / 奖项着色 / 校徽 ==========
 
@@ -1438,7 +2062,7 @@ class AssistantApp(BoardApp):
                        "helvetica=欧文字体、default=浏览器默认。")
         row = self._indent_row(body_font)
         self._hint(row, "这一项只影响榜单页怎么显示，不改任何榜单数据；"
-                        "改完「4 直播」页那条网址里的参数会跟着更新。"
+                        "改完「5 直播」页那条网址里的参数会跟着更新。"
                   ).pack(side="left", fill="x", expand=True)
 
 
@@ -2011,7 +2635,7 @@ class AssistantApp(BoardApp):
         ToolTip(photos_entry,
                 "放队伍照片的文件夹（滚榜揭晓奖项时，照片铺满整张奖项卡当背景）。\n"
                 "不填就用应用所在目录下的「滚榜图片」（不存在会自动创建）。\n"
-                "文件名用学号最稳（2026001.jpg），也可以直接用姓名（张三.jpg）；\n"
+                "文件名用学号最稳（26160358.jpg），也可以直接用姓名（汪章正.jpg）；\n"
                 "支持 .jpg / .jpeg / .png。\n"
                 "生成比赛包时会复制进 <比赛包>\\teams\\<队伍ID>\\photo.jpg（teams 这一层必须有）。\n"
                 "建议 16:9 或更宽、1920x1080 以上 —— 照片会铺满整张奖项卡。\n"
@@ -2021,7 +2645,7 @@ class AssistantApp(BoardApp):
         self.photos_hint = self._hint(
             row3b,
             f"现在用：{cfgmod.default_photos_dir()}（应用所在目录，不存在会自动创建）。"
-            "文件名优先按学号匹配（如 2026001.jpg），找不到再按姓名（如 张三.jpg）；支持 jpg/jpeg/png。"
+            "文件名优先按学号匹配（如 26160358.jpg），找不到再按姓名（如 汪章正.jpg）；支持 jpg/jpeg/png。"
             "生成后会复制进 <比赛包>\\teams\\<队伍ID>\\photo.jpg。",
             size=9)
         self.photos_hint.pack(side="left", fill="x", expand=True)
@@ -2040,7 +2664,7 @@ class AssistantApp(BoardApp):
                 "规则：\n"
                 "  · 文件名没有名字（.jpg 这种），或叫 logo / 校徽 / default / 机构\n"
                 "    → 默认校徽，所有队都用它；\n"
-                "  · 文件名 = 学号（2026002.png）或姓名（张三.png）→ 那支队的专属校徽；\n"
+                "  · 文件名 = 学号（26130030.png）或姓名（汪章正.png）→ 那支队的专属校徽；\n"
                 "  · 名字对不上任何队伍 → 忽略，生成日志里会列出来。\n"
                 "生成时会把校徽裁成圆形（居中裁成正方形 + 圆外透明）再放进\n"
                 "<比赛包>\\organizations\\<机构ID>\\logo.png；你的原文件不会被改动。")
@@ -2048,7 +2672,7 @@ class AssistantApp(BoardApp):
         self.logos_hint = self._hint(
             row3d,
             f"现在用：{cfgmod.default_logos_dir()}（应用所在目录，不存在会自动创建）。"
-            "空名字（.jpg）或 logo/校徽/default/机构 = 默认校徽；学号或姓名（张三.png）= 该队专属；"
+            "空名字（.jpg）或 logo/校徽/default/机构 = 默认校徽；学号或姓名（汪章正.png）= 该队专属；"
             "对不上的会被忽略并在生成日志里列出。校徽会裁成圆形放进 "
             "<比赛包>\\organizations\\<机构ID>\\logo.png（你的原文件不动），"
             "显示在奖项卡左下角。",
@@ -2331,7 +2955,7 @@ class AssistantApp(BoardApp):
         self._ghost_btn(row, "打开日志文件夹",
                         lambda: self._open_folder(self.service.run / "logs")).pack(side="left")
         ToolTip(self._svc_start_btn, "启动取数 + 榜单网页两个后台程序。\n"
-                                     "启动后点「打开榜单页」就能看到榜；给 OBS 用的网址在「4 直播」页。")
+                                     "启动后点「打开榜单页」就能看到榜；给 OBS 用的网址在「5 直播」页。")
         ToolTip(self._svc_stop_btn, "停止这两个后台程序（比赛结束、换比赛时点一下）。\n"
                                     "如果之前是别的程序占着端口，用下面的「终止旧服务」。")
 
@@ -2505,10 +3129,19 @@ class AssistantApp(BoardApp):
             return fallback
 
     def _collect_live_config(self) -> None:
-        """把界面上的值收进 self.live_cfg（并同步 view / 端口 / 间隔）。"""
+        """把界面上的值收进 self.live_cfg（并同步 view / 端口 / 间隔 / 平台）。"""
         live_cfg = self.live_cfg
         # 取数通道恒为 http（直连接口）：界面上已经没有可选的取数通道了。
         live_cfg["channel"] = "http"
+        # VJudge 版：平台 + 比赛 ID 必须写进运行目录 config.json —— poller 每轮重读，
+        # 这样切平台 / 改 ID 不用重启服务（服务启动时也会整份写一遍）。
+        platform = self._platform() if hasattr(self, "platform_var") else "pta"
+        live_cfg["platform"] = platform
+        try:
+            psid_now = str(self.cfg.get("problem_set_id") or self.psid_var.get() or "").strip()
+        except Exception:  # noqa: BLE001
+            psid_now = str(self.cfg.get("problem_set_id") or "").strip()
+        live_cfg["contest_id"] = psid_now
         for key in ("overlay", "top", "rows", "scroll", "scroll_speed",
                     "scroll_pause", "anim"):
             live_cfg["view"][key] = self._view_int(key, LIVE_DEFAULTS["view"][key])
@@ -2520,6 +3153,17 @@ class AssistantApp(BoardApp):
         # 界面上已删掉视角下拉框，这里恒定为 audience —— 榜单页 URL 带 ?freeze=audience。
         live_cfg["freeze_mode"] = "audience"
         live_cfg["view"]["freeze"] = "audience"
+        try:
+            raw_freeze = str(self.freeze_live_var.get()).strip()
+        except Exception:  # noqa: BLE001
+            raw_freeze = ""
+        if raw_freeze == "":
+            live_cfg["freeze_minutes"] = None          # 空 = 用比赛自带的封榜时长
+        else:
+            try:
+                live_cfg["freeze_minutes"] = max(0, int(float(raw_freeze)))
+            except ValueError:
+                live_cfg["freeze_minutes"] = None
         try:
             live_cfg["port"] = int(str(self.port_var.get()).strip())
         except (AttributeError, ValueError):
@@ -2893,7 +3537,10 @@ class AssistantApp(BoardApp):
             try:
                 notes = live.sync_run_dir(live.run_dir(cfgmod.work_root()))
             except Exception as exc:  # noqa: BLE001 - 同步失败也不能影响主流程
-                self._post(lambda: self._log(f"[资源] 运行目录同步失败：{exc}\n"))
+                # 注意：**不能**在 lambda 里直接引用 except 的 exc —— except 结束后
+                # exc 已被删除，延迟执行会抛 NameError（实测踩过）。先取出字符串。
+                message = f"{type(exc).__name__}: {exc}"
+                self._post(lambda m=message: self._log(f"[资源] 运行目录同步失败：{m}\n"))
                 return
             summary = next((n for n in reversed(notes) if "运行目录资源已同步" in n), "")
             changed = [n for n in notes if "已同步（源" not in n]
@@ -3061,46 +3708,51 @@ class AssistantApp(BoardApp):
         def job() -> None:
             items: list[dict] = []
             port = int(self.live_cfg.get("port") or live.DEFAULT_PORT)
-
-            # ① Cookie 是否有效 —— 真的请求一次 PTA（不是只看文件在不在）
+            platform = self._platform()
             psid = str(self.cfg.get("problem_set_id") or "")
-            problem = live.cookie_problem(cfgmod.work_root())
-            if problem:
-                items.append({
-                    "level": "err", "name": "Cookie 是否有效",
-                    "what": "实时榜单取数就靠它（真实请求一次 PTA 接口验证）",
-                    "detail": problem,
-                    "fix": "去更新 Cookie：① 浏览器登录 pintia.cn 并打开这场比赛 → F12 → "
-                           "Network → 右键请求 → Copy as cURL (bash) → 回本页「粘贴 Cookie」；"
-                           "② 或 F12 → Application → Cookies → https://pintia.cn，在 Request "
-                           "cookies 里分别复制 JSESSIONID 与 PTASession 两个值粘成一行"
-                           "（两个都必须带，只带 PTASession 会 401）。"})
+
+            # ① VJudge：比赛 ID 能不能拉到 rank JSON（只读，不写文件）
+            #    PTA ：Cookie 是否有效 —— 真的请求一次 PTA（不是只看文件在不在）
+            if platform == "vjudge":
+                items.append(self._vjudge_precheck_item(psid))
             else:
-                try:
-                    code, out = self._run_cookie_check()
-                except Exception as exc:  # noqa: BLE001
-                    code, out = 1, f"自检异常：{exc}"
-                if code == 0:
-                    items.append({
-                        "level": "ok", "name": "Cookie 是否有效",
-                        "what": "实时榜单取数就靠它（真实请求一次 PTA 接口验证）",
-                        "detail": f"真实请求了一次 PTA（题目集 {psid or '未填'}），Cookie 可用",
-                        "fix": ""})
-                elif code == 2:
-                    items.append({
-                        "level": "warn", "name": "Cookie 是否有效",
-                        "what": "实时榜单取数就靠它（真实请求一次 PTA 接口验证）",
-                        "detail": out.strip()[:180],
-                        "fix": "这台机器上没有可用的 Python 解释器，所以只能看 cookie.txt 在不在、"
-                               "没法真的请求一次；实时服务本身也需要 Python，请先装 Python 3.9+。"})
-                else:
-                    tail = " / ".join(line.strip() for line in out.splitlines()[-2:] if line.strip())
+                problem = live.cookie_problem(cfgmod.work_root())
+                if problem:
                     items.append({
                         "level": "err", "name": "Cookie 是否有效",
                         "what": "实时榜单取数就靠它（真实请求一次 PTA 接口验证）",
-                        "detail": f"真实请求失败（退出码 {code}）：{tail[:180]}",
-                        "fix": "Cookie 多半已过期。去更新 Cookie（两条做法同上）；"
-                               "更新后重新点「▶ 开始检查」。"})
+                        "detail": problem,
+                        "fix": "去更新 Cookie：① 浏览器登录 pintia.cn 并打开这场比赛 → F12 → "
+                               "Network → 右键请求 → Copy as cURL (bash) → 回本页「粘贴 Cookie」；"
+                               "② 或 F12 → Application → Cookies → https://pintia.cn，在 Request "
+                               "cookies 里分别复制 JSESSIONID 与 PTASession 两个值粘成一行"
+                               "（两个都必须带，只带 PTASession 会 401）。"})
+                else:
+                    try:
+                        code, out = self._run_cookie_check()
+                    except Exception as exc:  # noqa: BLE001
+                        code, out = 1, f"自检异常：{exc}"
+                    if code == 0:
+                        items.append({
+                            "level": "ok", "name": "Cookie 是否有效",
+                            "what": "实时榜单取数就靠它（真实请求一次 PTA 接口验证）",
+                            "detail": f"真实请求了一次 PTA（题目集 {psid or '未填'}），Cookie 可用",
+                            "fix": ""})
+                    elif code == 2:
+                        items.append({
+                            "level": "warn", "name": "Cookie 是否有效",
+                            "what": "实时榜单取数就靠它（真实请求一次 PTA 接口验证）",
+                            "detail": out.strip()[:180],
+                            "fix": "这台机器上没有可用的 Python 解释器，所以只能看 cookie.txt 在不在、"
+                                   "没法真的请求一次；实时服务本身也需要 Python，请先装 Python 3.9+。"})
+                    else:
+                        tail = " / ".join(line.strip() for line in out.splitlines()[-2:] if line.strip())
+                        items.append({
+                            "level": "err", "name": "Cookie 是否有效",
+                            "what": "实时榜单取数就靠它（真实请求一次 PTA 接口验证）",
+                            "detail": f"真实请求失败（退出码 {code}）：{tail[:180]}",
+                            "fix": "Cookie 多半已过期。去更新 Cookie（两条做法同上）；"
+                                   "更新后重新点「▶ 开始检查」。"})
 
             # ② 服务端口是否空闲
             pids = live.listening_pids(port)
@@ -3113,7 +3765,7 @@ class AssistantApp(BoardApp):
                     "what": "榜单页要在本机这个端口上开服务，被占就起不来",
                     "detail": f"端口 {port} 被占用：{names}"
                               + ("（看起来是本程序自己在跑）" if level == "warn" else ""),
-                    "fix": "① 到「3 服务」页点「终止旧服务」收掉上次残留的服务；"
+                    "fix": "① 到「4 服务」页点「终止旧服务」收掉上次残留的服务；"
                            "② 或者点「换一个空闲端口」。"})
             else:
                 items.append({
@@ -3181,7 +3833,7 @@ class AssistantApp(BoardApp):
         if not ok:
             return 2, "环境里没有可用的 Python 解释器，无法真实请求一次 PTA 验证 Cookie：" + note
         python = live.find_python()
-        root = cfgmod.core_dir()
+        root = cfgmod.resource_root()
         script = Path(root) / "pta_fetch.py"
         _text, path = live.read_cookie(cfgmod.work_root())
         argv = [python, str(script), "check",
@@ -3193,6 +3845,59 @@ class AssistantApp(BoardApp):
                               encoding="utf-8", errors="replace", timeout=120,
                               creationflags=live._no_window())
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+    def _run_vjudge_check(self, contest_id: str = "") -> tuple[int, str]:
+        """调用 vjudge_fetch.py check --contest <id>（只读，不写任何文件）。
+
+        VJudge 的环境预检就查这一件事：比赛 ID 能不能拉到 rank JSON。
+        其余检查项（端口 / Python / Pillow / 历史目录）跟平台无关，照旧检查。
+        """
+        psid = str(contest_id or self.cfg.get("problem_set_id") or "").strip()
+        if not psid:
+            return 2, "还没填 VJudge 比赛 ID"
+        ok, note = live.is_real_python()
+        if not ok:
+            return 2, "环境里没有可用的 Python 解释器，无法真实请求一次 VJudge：" + note
+        python = live.find_python()
+        root = cfgmod.resource_root()
+        script = Path(root) / "vjudge_fetch.py"
+        if not script.is_file():
+            return 1, f"找不到 {script}（VJudge 版抓取器没跟程序放在一起）"
+        argv = [python, str(script), "check", "--contest", psid, "--max-retries", "1"]
+        proc = subprocess.run(argv, cwd=str(root), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=120,
+                              creationflags=live._no_window())
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+    def _vjudge_precheck_item(self, contest_id: str = "") -> dict:
+        """VJudge 平台的环境预检项：比赛 ID 能否拉到 rank JSON。"""
+        psid = backend.normalize_vjudge_contest(contest_id or self.cfg.get("problem_set_id") or "")
+        if not psid:
+            return {"level": "err", "name": "VJudge 比赛 ID 能否拉到 rank JSON",
+                    "what": "实时榜单取数就靠这个接口（匿名 GET，公开比赛无需登录）",
+                    "detail": f"还没填 / 填的认不出来：{contest_id!r}",
+                    "fix": "到本页「VJudge 比赛 ID」里填 862258 这种数字，"
+                           "或直接粘 https://vjudge.net/contest/862258#rank。"}
+        try:
+            code, out = self._run_vjudge_check(psid)
+        except Exception as exc:  # noqa: BLE001
+            code, out = 1, f"自检异常：{exc}"
+        tail = " / ".join(line.strip() for line in out.splitlines()[-2:] if line.strip())
+        if code == 0:
+            return {"level": "ok", "name": "VJudge 比赛 ID 能否拉到 rank JSON",
+                    "what": "实时榜单取数就靠这个接口（匿名 GET，公开比赛无需登录）",
+                    "detail": f"比赛 {psid} 的 rank JSON 可读（不需要 Cookie）", "fix": ""}
+        if code == 2:
+            return {"level": "warn", "name": "VJudge 比赛 ID 能否拉到 rank JSON",
+                    "what": "实时榜单取数就靠这个接口（匿名 GET，公开比赛无需登录）",
+                    "detail": tail[:180],
+                    "fix": "没有可用的 Python 解释器就没法真的请求一次；"
+                           "实时服务本身也要 Python，请先装 Python 3.9+。"}
+        return {"level": "err", "name": "VJudge 比赛 ID 能否拉到 rank JSON",
+                "what": "实时榜单取数就靠这个接口（匿名 GET，公开比赛无需登录）",
+                "detail": f"请求没通过（退出码 {code}）：{tail[:180]}",
+                "fix": "检查比赛 ID 是否正确、网络是否通；VJudge 偶发很慢，"
+                       "过一会儿重试；私有比赛本版本不支持（没有密码赛登录）。"}
 
     def _precheck_done(self, items: list[dict], silent: bool = False) -> None:
         self._busy_off()
@@ -3546,7 +4251,7 @@ class AssistantApp(BoardApp):
         port = int(self.live_cfg.get("port") or live.DEFAULT_PORT)
         self._log(f"\n[实时] 增量刷新数据（题目集 {self.cfg.get('problem_set_id')}）…\n")
         if not self.service.any_running():
-            self._log("[实时] 服务没在跑：先到「3 服务」页点「启动」，再刷新。\n")
+            self._log("[实时] 服务没在跑：先到「4 服务」页点「启动」，再刷新。\n")
             self.on_live_start()
             return
 
@@ -3564,7 +4269,7 @@ class AssistantApp(BoardApp):
         self.live_cfg["last_fetch"] = time.strftime("%Y-%m-%d %H:%M:%S")
         self._persist()
         self._log("[实时] poller 已重启并开始新一轮增量拉取（5 秒内会有新数据）。\n")
-        self._set_status("实时数据正在增量刷新，看「3 服务」页的状态")
+        self._set_status("实时数据正在增量刷新，看「4 服务」页的状态")
         self._remember_live_run("实时数据增量刷新")
         self._refresh_roll_banner()
 
@@ -3752,7 +4457,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--keep-open", action="store_true")
     # 内部用：Esc 退出守护。合并版以前没声明这个开关，parse_known_args 会把它当
     # 「未知参数」丢掉 → 打包后 start_esc_watchdog 用 sys.executable + --esc-watchdog
-    # 拉起子进程时，子进程会照常开一个**完整界面**（用户看到「又弹出一个 ScoreDeck 窗口」）。
+    # 拉起子进程时，子进程会照常开一个**完整界面**（用户看到「又弹出一个 PTA 比赛助手」）。
     parser.add_argument("--esc-watchdog", action="store_true", help=argparse.SUPPRESS)
 
     args, _unknown = parser.parse_known_args(argv)

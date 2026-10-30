@@ -12,30 +12,9 @@ sys.dont_write_bytecode = True
 BASE = Path(__file__).resolve().parent
 # 默认读比赛数据本体；隔离验收可用环境变量指向冻结副本，避免与正在跑的 poller 抢文件。
 CONTEST_PATH = Path(os.environ.get("LIVE_BOARD_CONTEST") or (BASE / "contest.json"))
-
-
-def _module_dirs() -> list[Path]:
-    """``board_backend``（app/）与 ``pta_to_resolver_xml``（core/）所在目录。
-
-    仓库形状是平级的 ``app`` + ``core``；打包形状在 ``_internal`` 下；
-    旧布局则是与 live-board 平级的 ``pta-resolver``。找不到时保持原样即可，
-    真正的 import 报错会指出缺哪个模块。
-    """
-    repo = BASE.parent
-    env = os.environ.get("PTA_RESOLVER_DIR")
-    out: list[Path] = []
-    if env:
-        out.append(Path(env))
-    out += [repo / "core", repo / "app",
-            repo / "pta-resolver", repo / "pta-resolver" / "app",
-            repo / "_internal" / "core", repo / "_internal" / "app"]
-    return out
-
-
-for _dir in _module_dirs():
-    if _dir.is_dir() and str(_dir) not in sys.path:
-        sys.path.insert(0, str(_dir))
-
+RESOLVER = BASE.parent / "pta-resolver"
+sys.path.insert(0, str(RESOLVER))
+sys.path.insert(0, str(RESOLVER / "app"))
 from board_backend import make_circular_png, match_team_logos
 from pta_to_resolver_xml import compute_first_to_solve
 from board_core import (build_board, data_error, make_state, repair_data_files, frozen_cell_ids,
@@ -127,7 +106,17 @@ def load_config():
                 "follow", "follow_pause", "follow_max"):
         if key in cfg and key not in view:
             view[key] = cfg[key]
-    # 奖项只认本项目自己的 config.json：不跨目录回落，避免读到别的部署的旧数据。
+    if not view.get("awards") and view.get("awards_mode") != "starred":
+        # M12：打星模式下 view.awards 就是「前三组」（可能暂时为空 = 还没勾选），
+        # 这时**不能**回落到 F:\PTA-Board\config.json 的老奖项 —— 否则会按名次着色。
+        # 只读用户正在使用的配置；本项目配置有奖项时优先使用本项目配置。
+        external = Path(r"F:\PTA-Board\config.json")
+        try:
+            other = json.loads(external.read_text(encoding="utf-8-sig"))
+            if isinstance(other.get("awards"), list):
+                view["awards"] = other["awards"]
+        except (OSError, ValueError, TypeError):
+            pass
     return cfg
 
 
@@ -436,3 +425,13 @@ class LogoStore:
 
     def path(self, key):
         return self.files.get(key) or self.files.get("default")
+
+    def path_specific(self, key):
+        """只返回**这一支队专属**的校徽（匹配不到返回 None，不回落到默认）。
+
+        VJudge 版用：``/logo/<uid>`` 先问这里（备注校徽 / 备注姓名 / 学号），
+        没有就用默认校徽。（VJudge 头像那条回落 2026-10-27 已按用户要求删除：
+        头像经常抓不到，宁可显示默认校徽，也不要一堆半坏的头像。）
+        """
+        return self.files.get(key)
+

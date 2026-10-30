@@ -83,6 +83,10 @@ DEFAULTS: dict[str, Any] = {
     "schema": SCHEMA_VERSION,
     # ---- 比赛页 ----
     "problem_set_id": "",
+    #: 取数平台：``pta``（默认，拼题 A，需要有效 Cookie）/
+    #: ``vjudge``（VJudge，公开比赛匿名接口、不需要 Cookie，默认 10 秒轮询）。
+    #: 选 VJudge 时 ``problem_set_id`` 里存的就是 **VJudge 比赛 ID**（如 862258）。
+    "platform": "pta",
     # 取数只有一条路：直连接口（需要 Cookie）。2026-10-13 删除「借用浏览器」通道。
     "source_mode": "http",
     # ---- 播放与显示页 ----
@@ -157,25 +161,10 @@ def resource_root() -> Path:
         base = getattr(sys, "_MEIPASS", None)
         if base:
             cand = Path(base)
-            if ((cand / "core" / "pta_fetch.py").is_file()
-                    or (cand / "pta_fetch.py").is_file()
-                    or (cand / "tools").is_dir()):
+            if (cand / "pta_fetch.py").is_file() or (cand / "tools").is_dir():
                 return cand
         return Path(sys.executable).resolve().parent
     return app_dir().parent
-
-
-def core_dir() -> Path:
-    """后端脚本目录（``pta_fetch.py`` / ``pta_common.py`` / ``pta_to_resolver_xml.py``）。
-
-    源码仓库里在 ``core/``；老布局和 PyInstaller 的 ``_internal`` 里与本模块同级，
-    所以两个位置都找，找不到时返回 ``core/`` 方便报错信息指路。
-    """
-    root = resource_root()
-    for cand in (root / "core", root):
-        if (cand / "pta_fetch.py").is_file():
-            return cand
-    return root / "core"
 
 
 def work_root() -> Path:
@@ -189,7 +178,7 @@ def work_root() -> Path:
 # 队伍照片 / 校徽 的默认目录
 # --------------------------------------------------------------------------
 #: 「队伍照片目录」没配置时用它 —— 就是**应用所在目录**下的 ``滚榜图片``。
-#: 例如程序解压在 ``D:\ScoreDeck\``，这里就是 ``D:\ScoreDeck\滚榜图片``。
+#: 例如程序解压在 ``D:\PTA-比赛助手\``，这里就是 ``D:\PTA-比赛助手\滚榜图片``。
 PHOTOS_DIR_NAME = "滚榜图片"
 #: 「校徽目录」没配置时用它 —— 应用所在目录下的 ``校徽``。
 LOGOS_DIR_NAME = "校徽"
@@ -602,6 +591,9 @@ def sanitize(raw: Any) -> dict[str, Any]:
         cfg.update({k: v for k, v in raw.items() if k in DEFAULTS})
 
     cfg["problem_set_id"] = str(cfg.get("problem_set_id") or "").strip() or DEFAULTS["problem_set_id"]
+    # 平台：pta（默认）/ vjudge；旧配置没有这个键 → pta，行为不变。
+    cfg["platform"] = _as_choice(str(cfg.get("platform") or "").strip().lower(),
+                                 ("pta", "vjudge"), "pta")
     # 取数方式固定：直连接口（需要 Cookie）；旧配置里的其它值一律归到 http。
     cfg["source_mode"] = "http"
     # 旧配置迁移：step -> click（全程点击），auto -> auto（全程自动）
