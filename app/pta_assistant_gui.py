@@ -1851,7 +1851,9 @@ class AssistantApp(BoardApp):
                     row["entries"][key].configure(state="readonly", bg="#f7f9fc")
                 except Exception:  # noqa: BLE001
                     pass
-        if rebuild and not getattr(self, "_memo_loaded", False):
+        # 每次进这一页都重读一次：比赛里随时会进来新选手，
+        # 原来只在第一次打开时读（用户 2026-10-31 反馈：新选手在备注页看不到）。
+        if rebuild:
             self._memo_reload()
 
     # == 实时榜单 · 1 数据源 · 环境预检 ==================================
@@ -4330,10 +4332,11 @@ class AssistantApp(BoardApp):
         self._set_status("实时数据正在增量刷新，看「4 服务」页的状态")
         self._remember_live_run("实时数据增量刷新")
         self._refresh_roll_banner()
-        try:
-            self._post(self._build_star_picker)      # 新队伍/备注名立刻反映到打星列表
-        except Exception:  # noqa: BLE001
-            pass
+        for _fn in (self._build_star_picker, self._memo_reload):
+            try:
+                self._post(_fn)      # 新队伍 / 新备注名立刻反映到打星列表和备注表
+            except Exception:  # noqa: BLE001
+                pass
 
     def _fetch_done(self, result: dict) -> None:
         BoardApp._fetch_done(self, result)
@@ -4347,10 +4350,11 @@ class AssistantApp(BoardApp):
             self._persist()
             self._refresh_history()
             self._refresh_roll_banner()
-            try:
-                self._post(self._build_star_picker)  # 拉取成功后打星列表自动出现队伍
-            except Exception:  # noqa: BLE001
-                pass
+            for _fn in (self._build_star_picker, self._memo_reload):
+                try:
+                    self._post(_fn)      # 拉取成功后打星列表 / 备注表自动跟上
+                except Exception:  # noqa: BLE001
+                    pass
 
     def on_package(self) -> None:
         self._op_started = time.strftime("%Y-%m-%d %H:%M:%S")
