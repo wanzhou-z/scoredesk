@@ -12,6 +12,7 @@ def _find_resolver_dir() -> Path:
       1. 环境变量 ``PTA_RESOLVER_DIR``（部署时可以覆盖）；
       2. 本文件的**父目录** —— 打包后 live-board 与那几个模块同在 ``_internal\\``；
       3. 父目录下的 ``pta-resolver\\`` —— 源码仓库里的形状；
+      2b. 父目录下的 ``core\\`` —— 公开仓库（源码模式）的形状；
       4. 旧的本机绝对路径（兼容老部署，排在最后）。
     """
     here = Path(__file__).resolve().parent
@@ -21,8 +22,11 @@ def _find_resolver_dir() -> Path:
         cands.append(Path(env))
     # 打包后：poller 跑在 <程序根>\live\，模块其实在 <程序根>\_internal\，
     # 所以 _internal 必须排在"写死的旧路径"前面，否则会误用本机上的 PTA 开发树。
-    cands += [here.parent, here.parent / "_internal",
-              here.parent / "pta-resolver", here.parent / "_internal" / "pta-resolver"]
+    # 公开仓库（源码模式）：核心脚本在 <repo>\core\，与 liveboard\ 平级；
+    # 少了这一条，poller 一启动就 ModuleNotFoundError: pta_to_resolver_xml。
+    cands += [here.parent, here.parent / "_internal", here.parent / "core",
+              here.parent / "pta-resolver", here.parent / "_internal" / "pta-resolver",
+              here.parent / "_internal" / "core"]
     for cand in cands:
         try:
             if (cand / "pta_to_resolver_xml.py").is_file():

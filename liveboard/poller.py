@@ -35,6 +35,7 @@ def vj_fetch_path() -> Path:
     """定位 vjudge_fetch.py：优先跟 poller 同目录的那份。"""
     cands = [BASE / "vjudge_fetch.py",
              BASE.parent / "vjudge_fetch.py",
+             BASE.parent / "core" / "vjudge_fetch.py",      # 公开仓库布局：<repo>\core\
              BASE.parent / "_internal" / "vjudge_fetch.py",
              BASE.parent / "_internal" / "pta-resolver" / "vjudge_fetch.py",
              RES / "vjudge_fetch.py",

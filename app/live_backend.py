@@ -1280,7 +1280,10 @@ def child_env(run: Path | None = None) -> dict:
                   str(exe_dir / "_internal" / "tools")]
     else:
         resolver = Path(__file__).resolve().parent.parent
-        paths += [str(resolver), str(resolver / "app"), str(resolver / "tools")]
+        # core\ 是公开仓库里放 pta_common / pta_fetch / pta_to_resolver_xml /
+        # vjudge_fetch 的地方；漏了它，源码模式点「启动实时榜」时 poller 直接崩。
+        paths += [str(resolver), str(resolver / "app"), str(resolver / "tools"),
+                  str(resolver / "core")]
     env["PYTHONPATH"] = os.pathsep.join(paths)
     env["PYTHONUTF8"] = "1"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
