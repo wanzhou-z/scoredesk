@@ -336,7 +336,8 @@ class RankAwardsPanel:
         from pathlib import Path
         import board_config as cfgmod
         text = str(self.owner.cfg.get("last_contest_json") or "").strip()
-        fallback = cfgmod.work_root() / "contest.json"
+        # 同上：两份 contest.json 取新的那份，否则备注改名后这里还是旧名字
+        fallback = cfgmod.freshest_contest(text or None)
         if text:
             path = Path(text)
             if path.is_file() or not fallback.is_file():

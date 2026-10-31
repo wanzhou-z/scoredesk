@@ -890,3 +890,30 @@ class Store:
             if str(item.get("problem_set_id")) == str(psid):
                 return item
         return None
+
+def freshest_contest(preferred: str | "Path" | None = None) -> "Path":
+    """挑一个**最新的** contest.json 给界面用（打星列表 / 全队标记都要）。
+
+    用户反馈（2026-10-31）：备注改了名字，但「打星队伍」和滚榜「全队标记」两处
+    还是旧名字 —— 因为配置里的 ``last_contest_json`` 指着程序根目录那份旧数据，
+    而实时榜单用的是 ``live\contest.json``（每次轮询后更新）。这里改成按修改时间
+    取最新的一份，两份谁新用谁。
+    """
+    from pathlib import Path as _P
+    root = work_root()
+    cands: list[_P] = []
+    if preferred:
+        cands.append(_P(str(preferred)))
+    cands += [root / "contest.json", root / "live" / "contest.json"]
+    best: tuple[float, _P] | None = None
+    for cand in cands:
+        try:
+            if cand.is_file():
+                stamp = cand.stat().st_mtime
+                if best is None or stamp > best[0]:
+                    best = (stamp, cand)
+        except OSError:
+            continue
+    if best is not None:
+        return best[1]
+    return cands[0] if cands else root / "contest.json"

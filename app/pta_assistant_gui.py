@@ -2278,7 +2278,9 @@ class AssistantApp(BoardApp):
         """读当前比赛数据里的队伍（按名次排），给打星勾选用。"""
         try:
             text = str(self.cfg.get("last_contest_json") or "").strip()
-            path = Path(text) if text else (cfgmod.work_root() / "contest.json")
+            # 取最新的一份（程序根的 contest.json 可能比 live\contest.json 旧，
+            # 那会导致备注改了名字、这里还显示 handle）
+            path = cfgmod.freshest_contest(text or None)
             penalty = int(self.cfg.get("penalty_minutes") or 20)
         except Exception:  # noqa: BLE001
             return []
