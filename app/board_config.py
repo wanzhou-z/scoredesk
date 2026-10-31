@@ -892,7 +892,7 @@ class Store:
         return None
 
 def freshest_contest(preferred: str | "Path" | None = None) -> "Path":
-    """挑一个**最新的** contest.json 给界面用（打星列表 / 全队标记都要）。
+    r"""挑一个**最新的** contest.json 给界面用（打星列表 / 全队标记都要）。
 
     用户反馈（2026-10-31）：备注改了名字，但「打星队伍」和滚榜「全队标记」两处
     还是旧名字 —— 因为配置里的 ``last_contest_json`` 指着程序根目录那份旧数据，

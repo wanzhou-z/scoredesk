@@ -1488,7 +1488,7 @@ def wait_port_free(port: int, timeout: float = 8.0) -> bool:
 
 _POLL_RE = re.compile(
     r"通道=(?P<channel>\w+)\s+新增=(?P<new>\d+)\s+总提交=(?P<subs>\d+)\s+"
-    r"队伍=(?P<teams>\d+)\s+榜单变化=(?P<changed>\w+)")
+    r"队伍=(?P<teams>\d+)(?:/\d+)?\s+榜单变化=(?P<changed>\w+)")
 _START_RE = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+\s+INFO\s+启动：")
 
 

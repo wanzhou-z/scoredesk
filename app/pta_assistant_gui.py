@@ -2306,8 +2306,12 @@ class AssistantApp(BoardApp):
         host.pack(fill="x", padx=12, pady=(2, 8))
         teams = self._star_picker_teams()
         if not teams:
-            self._hint(host, "还没有队伍数据：先到「1 数据源」点「拉取数据」，再来勾打星。"
-                      ).pack(anchor="w")
+            self._hint(host, "还没有队伍数据：先到「1 数据源」点「拉取数据」，再回来点下面的"
+                             "「刷新队伍列表」（拉取成功后这里会自动刷新）。"
+                       ).pack(anchor="w")
+            row0 = tk.Frame(host, bg=host.cget("bg"))
+            row0.pack(anchor="w", pady=(6, 0))
+            self._ghost_btn(row0, "刷新队伍列表", self._build_star_picker).pack(side="left")
             return
         marked = set(self._star_ids())
         grid = tk.Frame(host, bg=host.cget("bg"))
@@ -3566,6 +3570,16 @@ class AssistantApp(BoardApp):
                 self._live_last_tick = now
                 self._drain_live_logs()
                 self._refresh_service_panel()
+                # 卡片上写着「每 3 秒自动刷新」——之前没有任何调用点，
+                # 于是「最近一次取数时间 / 耗时 / 累计请求数」永远是 — 和 0。
+                if now - getattr(self, "_live_status_at", 0.0) >= 3.0:
+                    self._live_status_at = now
+                    try:
+                        if self.service.running() or live.port_in_use(
+                                int(self.live_cfg.get("port") or live.DEFAULT_PORT)):
+                            self._refresh_live_status(quiet=True)
+                    except Exception:  # noqa: BLE001
+                        pass
             self.root.after(1000, self._tick_live)
         except Exception:  # noqa: BLE001
             self.root.after(2000, self._tick_live)
@@ -3659,28 +3673,70 @@ class AssistantApp(BoardApp):
                       "还没启动。点「启动」即可（比赛数据要先在「比赛」页拉过一次，"
                       "否则榜单会是空的）。", "hint")
 
-    def _refresh_live_status(self, force: bool = False) -> None:
-        """后台拉 /health + state.json（不阻塞界面、不抢焦点）。"""
-        if self._live_busy:
+    def _refresh_live_status(self, force: bool = False, quiet: bool = False) -> None:
+        """后台拉 /health（不阻塞界面、不抢焦点）。
+
+        quiet=True 是「每 3 秒自动刷新」用的：不动进度条、不禁用按钮、
+        也不额外拉 /api/board（那张表用不到），失败就静默跳过。
+        """
+        if quiet:
+            if getattr(self, "_live_status_quiet", False):
+                return                      # 上一轮还没回来，别叠
+            self._live_status_quiet = True
+        elif self._live_busy:
             return
         port = int(self.live_cfg.get("port") or live.DEFAULT_PORT)
 
         def job() -> None:
             started = time.perf_counter()
-            health = live.health(port)
+            try:
+                health = live.health(port)
+            except Exception:  # noqa: BLE001
+                health = None
             latency = (time.perf_counter() - started) * 1000
-            state = live.read_json(self.service.state_path, {}) or {}
-            data = live.board(port) or {}
-            self._post(lambda: self._live_status_done(health, latency, state, data))
+            if quiet:
+                state, data = {}, {}
+            else:
+                state = live.read_json(self.service.state_path, {}) or {}
+                data = live.board(port) or {}
+            self._post(lambda: self._live_status_done(health, latency, state, data,
+                                                      quiet=quiet))
 
-        self._run_job(job, "刷新实时状态 …")
+        if quiet:
+            threading.Thread(target=job, daemon=True).start()
+        else:
+            self._run_job(job, "刷新实时状态 …")
 
-    def _live_status_done(self, health, latency, state, data) -> None:
-        self._busy_off()
+    def _poller_cycles(self) -> int | None:
+        """poller.log 里累计跑过多少轮（读不到就 None，界面保留原值）。"""
+        try:
+            child = getattr(self.service, "poller", None)
+            path = getattr(child, "log_path", None)
+            if path is None:
+                # 服务是别处起的（或本实例没托管）：退回运行目录里的 poller.log
+                state = getattr(self.service, "state_path", None)
+                if state is None:
+                    return None
+                path = Path(state).parent / "logs" / "poller.log"
+            if not Path(path).is_file():
+                return None
+            return int(live.poller_stats(Path(path)).get("cycles") or 0)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _live_status_done(self, health, latency, state, data, quiet: bool = False) -> None:
+        if quiet:
+            self._live_status_quiet = False
+        else:
+            self._busy_off()
         if health:
             self.live_status = health
             self.live_cfg["last_latency_ms"] = round(latency, 1)
-            self.live_cfg["request_count"] = int(self.live_cfg.get("request_count") or 0) + 1
+            # 「累计请求数」= poller 真正跑过的轮数（从 poller.log 数），
+            # 不是界面刷新次数 —— 否则每 3 秒 +1，一会儿就上千，看不出真实取数量。
+            cycles = self._poller_cycles()
+            if cycles is not None:
+                self.live_cfg["request_count"] = cycles
             self.live_cfg["last_poll"] = health.get("last_poll") or ""
             self.live_cfg["last_health_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             self._persist()
@@ -4274,6 +4330,10 @@ class AssistantApp(BoardApp):
         self._set_status("实时数据正在增量刷新，看「4 服务」页的状态")
         self._remember_live_run("实时数据增量刷新")
         self._refresh_roll_banner()
+        try:
+            self._post(self._build_star_picker)      # 新队伍/备注名立刻反映到打星列表
+        except Exception:  # noqa: BLE001
+            pass
 
     def _fetch_done(self, result: dict) -> None:
         BoardApp._fetch_done(self, result)
@@ -4287,6 +4347,10 @@ class AssistantApp(BoardApp):
             self._persist()
             self._refresh_history()
             self._refresh_roll_banner()
+            try:
+                self._post(self._build_star_picker)  # 拉取成功后打星列表自动出现队伍
+            except Exception:  # noqa: BLE001
+                pass
 
     def on_package(self) -> None:
         self._op_started = time.strftime("%Y-%m-%d %H:%M:%S")
