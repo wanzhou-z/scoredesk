@@ -336,13 +336,12 @@ class RankAwardsPanel:
         from pathlib import Path
         import board_config as cfgmod
         text = str(self.owner.cfg.get("last_contest_json") or "").strip()
-        # 同上：两份 contest.json 取新的那份，否则备注改名后这里还是旧名字
-        fallback = cfgmod.freshest_contest(text or None)
+        # 优先配置里那份（当前这场比赛）；它失效时再由 freshest 在两个候选里挑一个。
         if text:
             path = Path(text)
-            if path.is_file() or not fallback.is_file():
+            if path.is_file():
                 return path
-        return fallback
+        return cfgmod.freshest_contest(None)
 
     def _records(self) -> list[dict[str, Any]]:
         """奖项表里现在的行（M17：优先取本编辑器自己的行，剔除异常项）。"""

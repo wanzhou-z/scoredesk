@@ -901,9 +901,17 @@ def freshest_contest(preferred: str | "Path" | None = None) -> "Path":
     """
     from pathlib import Path as _P
     root = work_root()
-    cands: list[_P] = []
+    # 配置里指的那份优先（就是「拉取数据」的输出位置）——它代表"当前这场比赛"。
+    # 直接按 mtime 抢最新会把 A 场的 live 数据带进 B 场，所以只在配置路径
+    # 不存在/失效时，才在「程序根」与「live」两份里取新的。
     if preferred:
-        cands.append(_P(str(preferred)))
+        picked = _P(str(preferred))
+        try:
+            if picked.is_file():
+                return picked
+        except OSError:
+            pass
+    cands: list[_P] = []
     cands += [root / "contest.json", root / "live" / "contest.json"]
     best: tuple[float, _P] | None = None
     for cand in cands:

@@ -506,8 +506,13 @@ def _run_fetch_vjudge(
         print(f"  罚时     : {max(0, int(penalty_minutes))} 分钟")
         print("  说明     : VJudge 走匿名公开接口，不需要 Cookie；")
         print("             拿不到封榜设置 / 题目标题（题目用字母 A/B/… 代替）。")
+        # 备注库必须是**和界面/实时榜同一份**（<程序根>\vjudge-aliases.db）。
+        # 不传 --db 时抓取器会退回「模块所在目录」，源码模式下就是 <repo>\core\ ——
+        # 那里通常没有库，于是滚榜写出的 contest.json 里还是 VJudge handle，
+        # 实时榜却是备注名（用户 2026-11-01 反馈）。
         argv = ["fetch", "--contest", cid, "--out", str(out_path),
-                "--penalty", str(max(0, int(penalty_minutes)))]
+                "--penalty", str(max(0, int(penalty_minutes))),
+                "--db", str(Path(root) / "vjudge-aliases.db")]
         try:
             code = int(vj.main(argv) or 0)
         except SystemExit as exc:
